@@ -1,6 +1,7 @@
 import os
 import uuid
 import json
+from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 from PIL import Image
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from app.models.analytics import AnalyticsEvent
 from app.processors.image_processor import ImageProcessor
 from app.processors.psd_processor import PytoshopPSDProcessor
 from app.processors.pattern_engine import PatternEngine
+from app.services.png_processor import PNGProcessor
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
@@ -307,3 +309,204 @@ class DesignService:
         db.refresh(job)
 
         return job
+
+    @staticmethod
+    def _get_zone_dict(zone: Optional[PrintZone], default_x: float, default_y: float, default_w: float, default_h: float) -> Dict[str, Any]:
+        return {
+            "x": zone.x if zone else default_x,
+            "y": zone.y if zone else default_y,
+            "width": zone.width if zone else default_w,
+            "height": zone.height if zone else default_h,
+            "safe_margin": zone.safe_margin if zone else 20.0,
+            "fit_mode": zone.fit_mode if zone else "contain"
+        }
+
+    @staticmethod
+    def generate_print_ready_png(
+        color: str,
+        style: str,
+        pattern_id: str,
+        front_artwork_id: Optional[str],
+        back_artwork_id: Optional[str],
+        transforms: Dict[str, Any],
+        include_labels: bool,
+        db: Session
+    ) -> DesignJob:
+        """
+        Executes production 2x2 PNG generation (5400x5286 px) containing:
+        Top-Left: Black Front, Top-Right: Black Back,
+        Bottom-Left: White Front, Bottom-Right: White Back.
+        """
+        pattern = db.query(Pattern).filter(Pattern.pattern_id == pattern_id).first()
+        if not pattern:
+            raise ValueError(f"Pattern '{pattern_id}' not found.")
+
+        reqs = PatternEngine.get_pattern_requirements(pattern)
+        if reqs["requires_front"] and not front_artwork_id:
+            raise ValueError("Front artwork is required for this pattern.")
+        if reqs["requires_back"] and not back_artwork_id:
+            raise ValueError("Back artwork is required for this pattern.")
+
+        # Load artworks
+        front_art_img = None
+        if reqs["requires_front"] and front_artwork_id:
+            front_path = os.path.join(UPLOADS_DIR, front_artwork_id)
+            if not os.path.exists(front_path):
+                raise FileNotFoundError(f"Front artwork file '{front_artwork_id}' not found.")
+            front_art_img = PNGProcessor.load_artwork(front_path)
+
+        back_art_img = None
+        if reqs["requires_back"] and back_artwork_id:
+            back_path = os.path.join(UPLOADS_DIR, back_artwork_id)
+            if not os.path.exists(back_path):
+                raise FileNotFoundError(f"Back artwork file '{back_artwork_id}' not found.")
+            back_art_img = PNGProcessor.load_artwork(back_path)
+
+        # Get front print zone
+        f_slots = pattern.get_front_slots()
+        f_zone_code = f_slots[0].get("zone_code") if f_slots else "FULL_FRONT"
+        f_zone = db.query(PrintZone).filter(PrintZone.zone_code == f_zone_code).first()
+        front_zone_dict = DesignService._get_zone_dict(f_zone, 864.0, 640.0, 970.0, 1451.0)
+
+        # Get back print zone
+        b_slots = pattern.get_back_slots()
+        b_zone_code = b_slots[0].get("zone_code") if b_slots else "FULL_BACK"
+        b_zone = db.query(PrintZone).filter(PrintZone.zone_code == b_zone_code).first()
+        back_zone_dict = DesignService._get_zone_dict(b_zone, 750.0, 550.0, 1200.0, 1650.0)
+
+        front_tf = transforms.get("front", {})
+        back_tf = transforms.get("back", {})
+
+        # Render all four views
+        blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf)
+        blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf)
+        wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf)
+        wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf)
+
+        # Composite into 2x2 sheet at 5400 x 5286 px
+        sheet_2x2 = PNGProcessor.create_2x2_sheet(
+            black_front=blk_front,
+            black_back=blk_back,
+            white_front=wht_front,
+            white_back=wht_back,
+            include_labels=include_labels
+        )
+
+        now = datetime.utcnow()
+        timestamp_str = now.strftime("%Y%m%d_%H%M%S")
+        safe_pattern_code = pattern_id.upper().replace("-", "_")
+        job_code = f"DESIGNJOB_{timestamp_str}_{safe_pattern_code}"
+        png_filename = f"{job_code}_2X2_TSHIRT.png"
+        png_output_path = os.path.join(GENERATED_DIR, png_filename)
+        preview_png_filename = f"{job_code}_preview.png"
+        preview_png_path = os.path.join(GENERATED_DIR, preview_png_filename)
+
+        # Export high-res production PNG & web preview
+        PNGProcessor.export_png(sheet_2x2, png_output_path)
+        PNGProcessor.export_web_preview(sheet_2x2, preview_png_path, max_width=1600)
+
+        file_size = os.path.getsize(png_output_path) if os.path.exists(png_output_path) else 0
+
+        # Save DesignJob
+        job = DesignJob(
+            job_code=job_code,
+            garment_color=color,
+            garment_style=style,
+            pattern_id=pattern_id,
+            pattern_name=pattern.name,
+            status="completed",
+            front_artwork_path=front_artwork_id,
+            back_artwork_path=back_artwork_id,
+            output_png_path=png_output_path,
+            preview_png_path=preview_png_path,
+            file_size_bytes=file_size,
+            canvas_width=5400,
+            canvas_height=5286,
+            format="PNG",
+            color_mode="RGBA",
+            placement_config=json.dumps(transforms),
+            completed_at=datetime.utcnow()
+        )
+        db.add(job)
+
+        # Log Analytics Event
+        event = AnalyticsEvent(
+            event_type="design_generated",
+            entity_id=job_code,
+            details=json.dumps({
+                "color": color,
+                "style": style,
+                "pattern_id": pattern_id,
+                "format": "PNG",
+                "resolution": "5400x5286",
+                "file_size": file_size
+            })
+        )
+        db.add(event)
+        db.commit()
+        db.refresh(job)
+
+        return job
+
+    @staticmethod
+    def generate_2x2_preview(
+        pattern_id: str,
+        front_artwork_id: Optional[str],
+        back_artwork_id: Optional[str],
+        transforms: Dict[str, Any],
+        include_labels: bool,
+        db: Session
+    ) -> str:
+        """
+        Creates a fast, web-scaled 2x2 preview sheet using the exact same rendering engine.
+        Returns the relative URL for frontend display.
+        """
+        pattern = db.query(Pattern).filter(Pattern.pattern_id == pattern_id).first()
+        reqs = PatternEngine.get_pattern_requirements(pattern) if pattern else {"requires_front": True, "requires_back": False}
+
+        front_art_img = None
+        if reqs["requires_front"] and front_artwork_id:
+            front_path = os.path.join(UPLOADS_DIR, front_artwork_id)
+            if os.path.exists(front_path):
+                front_art_img = PNGProcessor.load_artwork(front_path)
+
+        back_art_img = None
+        if reqs["requires_back"] and back_artwork_id:
+            back_path = os.path.join(UPLOADS_DIR, back_artwork_id)
+            if os.path.exists(back_path):
+                back_art_img = PNGProcessor.load_artwork(back_path)
+
+        # Front zone
+        f_slots = pattern.get_front_slots() if pattern else []
+        f_zone_code = f_slots[0].get("zone_code") if f_slots else "FULL_FRONT"
+        f_zone = db.query(PrintZone).filter(PrintZone.zone_code == f_zone_code).first()
+        front_zone_dict = DesignService._get_zone_dict(f_zone, 864.0, 640.0, 970.0, 1451.0)
+
+        # Back zone
+        b_slots = pattern.get_back_slots() if pattern else []
+        b_zone_code = b_slots[0].get("zone_code") if b_slots else "FULL_BACK"
+        b_zone = db.query(PrintZone).filter(PrintZone.zone_code == b_zone_code).first()
+        back_zone_dict = DesignService._get_zone_dict(b_zone, 750.0, 550.0, 1200.0, 1650.0)
+
+        front_tf = transforms.get("front", {})
+        back_tf = transforms.get("back", {})
+
+        blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf)
+        blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf)
+        wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf)
+        wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf)
+
+        sheet_2x2 = PNGProcessor.create_2x2_sheet(
+            black_front=blk_front,
+            black_back=blk_back,
+            white_front=wht_front,
+            white_back=wht_back,
+            include_labels=include_labels
+        )
+
+        preview_filename = f"preview_2x2_{uuid.uuid4().hex[:10]}.png"
+        preview_path = os.path.join(GENERATED_DIR, preview_filename)
+        PNGProcessor.export_web_preview(sheet_2x2, preview_path, max_width=1600)
+
+        return f"/generated/{preview_filename}"
+

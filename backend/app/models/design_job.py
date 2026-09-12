@@ -19,8 +19,13 @@ class DesignJob(Base):
     back_artwork_path = Column(String(255), nullable=True)
     
     output_psd_path = Column(String(255), nullable=True)
+    output_png_path = Column(String(255), nullable=True)
     preview_png_path = Column(String(255), nullable=True)
     file_size_bytes = Column(Integer, default=0)
+    canvas_width = Column(Integer, default=5400)
+    canvas_height = Column(Integer, default=5286)
+    format = Column(String(20), default="PNG")
+    color_mode = Column(String(20), default="RGBA")
     
     placement_config = Column(Text, default="{}") # JSON string of slot transforms
     

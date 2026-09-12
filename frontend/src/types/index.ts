@@ -75,6 +75,7 @@ export interface ArtworkUploadResult {
 export interface DesignJob {
   id: number;
   job_code: string;
+  filename?: string;
   garment_color: string;
   garment_style: string;
   pattern_id: string;
@@ -82,9 +83,16 @@ export interface DesignJob {
   status: string;
   error_message?: string;
   output_psd_path?: string;
+  output_png_path?: string;
   preview_png_path?: string;
+  png_url?: string;
   file_size_bytes: number;
   download_url?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  color_mode?: string;
+  views?: string[];
   created_at: string;
 }
 

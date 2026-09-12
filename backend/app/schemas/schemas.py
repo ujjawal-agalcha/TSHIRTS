@@ -86,12 +86,13 @@ class SlotTransform(BaseModel):
     fit_mode: Optional[str] = "contain"
 
 class GenerateDesignRequest(BaseModel):
-    color: str
-    style: str
+    color: str = "Black"
+    style: str = "Oversized"
     pattern_id: str
     front_artwork_id: Optional[str] = None
     back_artwork_id: Optional[str] = None
     transforms: Dict[str, SlotTransform] = Field(default_factory=dict)
+    include_labels: bool = False
 
 class PreviewDesignRequest(BaseModel):
     color: str
@@ -101,20 +102,37 @@ class PreviewDesignRequest(BaseModel):
     artwork_filename: Optional[str] = None
     transform: Optional[SlotTransform] = None
 
+class Preview2x2Request(BaseModel):
+    pattern_id: str
+    front_artwork_id: Optional[str] = None
+    back_artwork_id: Optional[str] = None
+    transforms: Dict[str, SlotTransform] = Field(default_factory=dict)
+    include_labels: bool = False
+
 class DesignJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     job_code: str
+    filename: Optional[str] = None
     garment_color: str
     garment_style: str
     pattern_id: str
     pattern_name: Optional[str]
     status: str
-    error_message: Optional[str]
-    output_psd_path: Optional[str]
-    preview_png_path: Optional[str]
-    file_size_bytes: int
+    error_message: Optional[str] = None
+    output_psd_path: Optional[str] = None
+    output_png_path: Optional[str] = None
+    preview_png_path: Optional[str] = None
+    png_url: Optional[str] = None
     download_url: Optional[str] = None
+    file_size_bytes: int = 0
+    width: int = 5400
+    height: int = 5286
+    canvas_width: int = 5400
+    canvas_height: int = 5286
+    format: str = "PNG"
+    color_mode: str = "RGBA"
+    views: List[str] = ["black_front", "black_back", "white_front", "white_back"]
     created_at: datetime
 
 # --- Inventory ---

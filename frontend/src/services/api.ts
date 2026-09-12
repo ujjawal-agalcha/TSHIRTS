@@ -66,15 +66,40 @@ export const ApiService = {
     return res.data;
   },
 
-  generatePsd: async (payload: {
-    color: string;
-    style: string;
+  generatePng: async (payload: {
+    color?: string;
+    style?: string;
     pattern_id: string;
     front_artwork_id?: string;
     back_artwork_id?: string;
     transforms: Record<string, SlotTransform>;
+    include_labels?: boolean;
   }): Promise<DesignJob> => {
     const res = await api.post('/design/generate', payload);
+    return res.data;
+  },
+
+  generatePsd: async (payload: {
+    color?: string;
+    style?: string;
+    pattern_id: string;
+    front_artwork_id?: string;
+    back_artwork_id?: string;
+    transforms: Record<string, SlotTransform>;
+    include_labels?: boolean;
+  }): Promise<DesignJob> => {
+    const res = await api.post('/design/generate', payload);
+    return res.data;
+  },
+
+  get2x2Preview: async (payload: {
+    pattern_id: string;
+    front_artwork_id?: string;
+    back_artwork_id?: string;
+    transforms: Record<string, SlotTransform>;
+    include_labels?: boolean;
+  }): Promise<{ preview_url: string }> => {
+    const res = await api.post('/design/preview-2x2', payload);
     return res.data;
   },
 

@@ -9,6 +9,7 @@ from app.models.design_job import DesignJob
 from app.schemas.schemas import (
     GenerateDesignRequest,
     PreviewDesignRequest,
+    Preview2x2Request,
     DesignJobResponse
 )
 from app.services.design_service import DesignService
@@ -48,46 +49,89 @@ def preview_design(
     )
     return {"preview_url": preview_url}
 
+@router.post("/design/preview-2x2")
+def preview_design_2x2(
+    payload: Preview2x2Request,
+    db: Session = Depends(get_db)
+):
+    try:
+        transforms_dict = {k: v.model_dump() for k, v in payload.transforms.items()}
+        preview_url = DesignService.generate_2x2_preview(
+            pattern_id=payload.pattern_id,
+            front_artwork_id=payload.front_artwork_id,
+            back_artwork_id=payload.back_artwork_id,
+            transforms=transforms_dict,
+            include_labels=payload.include_labels,
+            db=db
+        )
+        return {"preview_url": preview_url}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @router.post("/design/generate", response_model=DesignJobResponse)
-def generate_design_psd(
+def generate_design(
     payload: GenerateDesignRequest,
     db: Session = Depends(get_db)
 ):
     try:
         transforms_dict = {k: v.model_dump() for k, v in payload.transforms.items()}
-        job = DesignService.generate_print_ready_psd(
+        job = DesignService.generate_print_ready_png(
             color=payload.color,
             style=payload.style,
             pattern_id=payload.pattern_id,
             front_artwork_id=payload.front_artwork_id,
             back_artwork_id=payload.back_artwork_id,
             transforms=transforms_dict,
+            include_labels=payload.include_labels,
             db=db
         )
         
         res = DesignJobResponse.model_validate(job)
+        if job.output_png_path:
+            res.filename = os.path.basename(job.output_png_path)
+            res.png_url = f"/generated/{res.filename}"
+        else:
+            res.filename = f"{job.job_code}.png"
+            res.png_url = f"/generated/{res.filename}"
         res.download_url = f"/api/design/download/{job.id}"
+        res.width = job.canvas_width or 5400
+        res.height = job.canvas_height or 5286
+        res.format = "PNG"
+        res.color_mode = "RGBA"
+        res.views = ["black_front", "black_back", "white_front", "white_back"]
         return res
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PSD generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"PNG generation failed: {str(e)}")
 
 @router.get("/design/download/{job_id}")
-def download_generated_psd(
+def download_generated_design(
     job_id: int,
     db: Session = Depends(get_db)
 ):
     job = db.query(DesignJob).filter(DesignJob.id == job_id).first()
-    if not job or not job.output_psd_path or not os.path.exists(job.output_psd_path):
-        raise HTTPException(status_code=404, detail="Generated PSD file not found.")
-    
-    filename = os.path.basename(job.output_psd_path)
-    return FileResponse(
-        path=job.output_psd_path,
-        media_type="image/vnd.adobe.photoshop",
-        filename=filename
-    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Design job not found.")
+
+    # Primary production output: PNG
+    if job.output_png_path and os.path.exists(job.output_png_path):
+        filename = os.path.basename(job.output_png_path)
+        return FileResponse(
+            path=job.output_png_path,
+            media_type="image/png",
+            filename=filename
+        )
+    # Fallback to PSD if job was created with legacy PSD flow
+    elif job.output_psd_path and os.path.exists(job.output_psd_path):
+        filename = os.path.basename(job.output_psd_path)
+        return FileResponse(
+            path=job.output_psd_path,
+            media_type="image/vnd.adobe.photoshop",
+            filename=filename
+        )
+    else:
+        raise HTTPException(status_code=404, detail="Generated design file not found on disk.")
 
 @router.get("/design-jobs", response_model=List[DesignJobResponse])
 def list_design_jobs(
@@ -98,6 +142,16 @@ def list_design_jobs(
     results = []
     for j in jobs:
         r = DesignJobResponse.model_validate(j)
+        if j.output_png_path:
+            r.filename = os.path.basename(j.output_png_path)
+            r.png_url = f"/generated/{r.filename}"
+        elif j.output_psd_path:
+            r.filename = os.path.basename(j.output_psd_path)
         r.download_url = f"/api/design/download/{j.id}"
+        r.width = j.canvas_width or 5400
+        r.height = j.canvas_height or 5286
+        r.format = j.format or "PNG"
+        r.color_mode = j.color_mode or "RGBA"
+        r.views = ["black_front", "black_back", "white_front", "white_back"]
         results.append(r)
     return results

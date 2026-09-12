@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Check, 
   Upload, 
@@ -11,13 +11,12 @@ import {
   AlertCircle,
   FileImage,
   RefreshCw,
-  ExternalLink,
-  ZoomIn,
-  Move
+  Maximize2,
+  Grid
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { ApiService } from '../../services/api';
-import { Pattern, Template, PrintZone, SlotTransform, ArtworkUploadResult, DesignJob } from '../../types';
+import { Pattern, Template, SlotTransform, ArtworkUploadResult, DesignJob } from '../../types';
 
 export const DesignGenerator: React.FC = () => {
   // Config state
@@ -34,8 +33,12 @@ export const DesignGenerator: React.FC = () => {
   const [isUploadingBack, setIsUploadingBack] = useState<boolean>(false);
 
   // Preview & Transforms
-  const [previewSide, setPreviewSide] = useState<'front' | 'back'>('front');
+  const [activeTuningTab, setActiveTuningTab] = useState<'front' | 'back'>('front');
   const [showBoundingBox, setShowBoundingBox] = useState<boolean>(true);
+  const [includeLabels, setIncludeLabels] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<'2x2' | 'single'>('2x2');
+  const [focusedView, setFocusedView] = useState<'black_front' | 'black_back' | 'white_front' | 'white_back'>('black_front');
+
   const [frontTransform, setFrontTransform] = useState<SlotTransform>({
     offset_x: 0,
     offset_y: 0,
@@ -109,7 +112,7 @@ export const DesignGenerator: React.FC = () => {
     else setBackTransform(defaultTransform);
   };
 
-  // Generate PSD
+  // Generate High-Res 2x2 PNG
   const handleGenerate = async () => {
     setErrorMessage(null);
 
@@ -124,7 +127,7 @@ export const DesignGenerator: React.FC = () => {
 
     setIsGenerating(true);
     try {
-      const job = await ApiService.generatePsd({
+      const job = await ApiService.generatePng({
         color,
         style,
         pattern_id: selectedPatternId,
@@ -133,97 +136,219 @@ export const DesignGenerator: React.FC = () => {
         transforms: {
           front: frontTransform,
           back: backTransform
-        }
+        },
+        include_labels: includeLabels
       });
 
       setGeneratedJob(job);
 
       // Celebrate with confetti
       confetti({
-        particleCount: 100,
-        spread: 70,
+        particleCount: 120,
+        spread: 80,
         origin: { y: 0.6 }
       });
 
-      // Automatically trigger download
+      // Automatically trigger real PNG download
       if (job.download_url) {
         const link = document.createElement('a');
         link.href = job.download_url;
-        link.setAttribute('download', `${job.job_code}.psd`);
+        link.setAttribute('download', job.filename || `${job.job_code}_2X2_TSHIRT.png`);
         document.body.appendChild(link);
         link.click();
         link.remove();
       }
     } catch (err: any) {
-      setErrorMessage(err.response?.data?.detail || 'PSD generation failed.');
+      setErrorMessage(err.response?.data?.detail || 'PNG generation failed.');
     } finally {
       setIsGenerating(false);
     }
   };
 
-  // Compute mockup image URL for preview
-  const currentMockupUrl = `/mockups/${color.toLowerCase()}_${previewSide}.png`;
-
-  // Get active zone for preview side
+  // Resolve active print zones for front & back
   const activeTemplate = templates[0];
-  const activeSlots = previewSide === 'front' ? selectedPattern?.front_slots : selectedPattern?.back_slots;
-  const activeZoneCode = activeSlots && activeSlots.length > 0 ? activeSlots[0].zone_code : (previewSide === 'front' ? 'FULL_FRONT' : 'FULL_BACK');
-  const activeZone = activeTemplate?.zones.find(z => z.zone_code === activeZoneCode) || {
-    name: previewSide === 'front' ? 'Full Front Graphic' : 'Full Back Graphic',
-    zone_code: activeZoneCode,
-    x: previewSide === 'front' ? 864 : 750,
-    y: previewSide === 'front' ? 640 : 550,
-    width: previewSide === 'front' ? 970 : 1200,
-    height: previewSide === 'front' ? 1451 : 1650,
+  const frontSlots = selectedPattern?.front_slots;
+  const backSlots = selectedPattern?.back_slots;
+
+  const frontZoneCode = frontSlots && frontSlots.length > 0 ? frontSlots[0].zone_code : 'FULL_FRONT';
+  const backZoneCode = backSlots && backSlots.length > 0 ? backSlots[0].zone_code : 'FULL_BACK';
+
+  const frontZone = activeTemplate?.zones.find(z => z.zone_code === frontZoneCode) || {
+    name: 'Full Front Graphic',
+    zone_code: frontZoneCode,
+    x: 864,
+    y: 640,
+    width: 970,
+    height: 1451,
     safe_margin: 20
   };
 
-  const currentTransform = previewSide === 'front' ? frontTransform : backTransform;
-  const currentArtwork = previewSide === 'front' ? frontArtwork : backArtwork;
+  const backZone = activeTemplate?.zones.find(z => z.zone_code === backZoneCode) || {
+    name: 'Full Back Graphic',
+    zone_code: backZoneCode,
+    x: 750,
+    y: 550,
+    width: 1200,
+    height: 1650,
+    safe_margin: 20
+  };
 
-  // Convert canvas pixel coordinates (2700x2643) to percentage for responsive mockup overlay
   const canvasW = 2700;
   const canvasH = 2643;
 
-  const zoneLeftPct = (activeZone.x / canvasW) * 100;
-  const zoneTopPct = (activeZone.y / canvasH) * 100;
-  const zoneWidthPct = (activeZone.width / canvasW) * 100;
-  const zoneHeightPct = (activeZone.height / canvasH) * 100;
+  // Active transform for the selected tuning tab
+  const currentTransform = activeTuningTab === 'front' ? frontTransform : backTransform;
 
-  // Artwork position with user offsets
-  const artOffsetXPct = (currentTransform.offset_x / canvasW) * 100;
-  const artOffsetYPct = (currentTransform.offset_y / canvasH) * 100;
+  // Render a single quadrant in the 2x2 layout
+  const renderQuadrant = (
+    viewKey: 'black_front' | 'black_back' | 'white_front' | 'white_back',
+    label: string,
+    shirtSide: 'front' | 'back',
+    shirtColor: 'black' | 'white'
+  ) => {
+    const isFront = shirtSide === 'front';
+    const zone = isFront ? frontZone : backZone;
+    const tf = isFront ? frontTransform : backTransform;
+    const art = isFront ? frontArtwork : backArtwork;
+
+    const zoneLeftPct = (zone.x / canvasW) * 100;
+    const zoneTopPct = (zone.y / canvasH) * 100;
+    const zoneWidthPct = (zone.width / canvasW) * 100;
+    const zoneHeightPct = (zone.height / canvasH) * 100;
+
+    const artOffsetXPct = (tf.offset_x / canvasW) * 100;
+    const artOffsetYPct = (tf.offset_y / canvasH) * 100;
+
+    const mockupSrc = `/mockups/${shirtColor}_${shirtSide}.png`;
+
+    return (
+      <div 
+        key={viewKey}
+        className="relative bg-[#070b12] rounded-lg overflow-hidden border border-[#1e293d]/80 flex flex-col items-center justify-center p-2 group"
+      >
+        {/* Quadrant Header Badge */}
+        <div className="absolute top-2 left-2 z-30 flex items-center space-x-1.5 bg-black/75 backdrop-blur px-2 py-0.5 rounded text-[10px] font-semibold text-slate-300 border border-slate-700/60 shadow">
+          <span className={`w-2 h-2 rounded-full ${shirtColor === 'black' ? 'bg-slate-900 border border-slate-600' : 'bg-white border border-slate-300'}`} />
+          <span>{label}</span>
+        </div>
+
+        {/* Optional View Label Overlay (as requested for the PNG export setting preview) */}
+        {includeLabels && (
+          <div className="absolute top-8 left-2 z-30 text-[9px] font-mono font-bold tracking-wider text-slate-400 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-800">
+            {label.toUpperCase()}
+          </div>
+        )}
+
+        {/* T-Shirt Canvas Container with 2700:2643 Aspect Ratio */}
+        <div className="relative w-full aspect-[2700/2643] flex items-center justify-center">
+          {/* Base T-Shirt Template */}
+          <img
+            src={mockupSrc}
+            alt={label}
+            className="w-full h-full object-contain pointer-events-none drop-shadow-md select-none"
+          />
+
+          {/* Print Zone Boundary Outline */}
+          {showBoundingBox && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${zoneLeftPct}%`,
+                top: `${zoneTopPct}%`,
+                width: `${zoneWidthPct}%`,
+                height: `${zoneHeightPct}%`,
+              }}
+              className="border border-dashed border-blue-400/60 bg-blue-500/5 rounded pointer-events-none z-10 flex flex-col justify-between p-0.5"
+            >
+              <span className="text-[7px] font-mono text-blue-300 font-bold bg-blue-950/90 px-1 rounded self-start">
+                {zone.name || zone.zone_code}
+              </span>
+            </div>
+          )}
+
+          {/* Composited Artwork Overlay */}
+          {art && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${zoneLeftPct + artOffsetXPct}%`,
+                top: `${zoneTopPct + artOffsetYPct}%`,
+                width: `${zoneWidthPct}%`,
+                height: `${zoneHeightPct}%`,
+                transform: `rotate(${tf.rotation}deg) scale(${tf.scale_multiplier})`,
+                transformOrigin: 'center center',
+              }}
+              className="z-20 flex items-center justify-center pointer-events-none transition-transform duration-75"
+            >
+              <img
+                src={art.url}
+                alt="Composited Artwork"
+                style={{
+                  objectFit: (tf.fit_mode === 'stretch' ? 'fill' : tf.fit_mode === 'cover' ? 'cover' : 'contain') as any,
+                }}
+                className="max-w-full max-h-full filter drop-shadow-md"
+              />
+            </div>
+          )}
+
+          {/* Empty slot placeholder indicator */}
+          {!art && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${zoneLeftPct}%`,
+                top: `${zoneTopPct}%`,
+                width: `${zoneWidthPct}%`,
+                height: `${zoneHeightPct}%`,
+              }}
+              className="z-10 flex items-center justify-center text-center p-2 pointer-events-none"
+            >
+              <span className="text-[10px] text-slate-500 bg-slate-950/70 px-2 py-1 rounded border border-slate-800">
+                {isFront ? (requiresFront ? 'Front Art Required' : 'No Front Art') : (requiresBack ? 'Back Art Required' : 'No Back Art')}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white tracking-tight flex items-center space-x-2">
             <span>Design Generator</span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-              PSD Engine
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold tracking-wide">
+              2×2 PNG Engine (5400×5286)
             </span>
           </h2>
           <p className="text-sm text-slate-400 mt-1">
-            Configure garment, select pattern, upload artwork, fine-tune placement, and compile a real production PSD.
+            Upload artwork, select pattern, configure print zones, and compile a production-ready 2×2 high-resolution PNG sheet.
           </p>
         </div>
 
+        {/* Ready to Download Bar */}
         {generatedJob && (
-          <div className="flex items-center space-x-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2">
-            <Check className="w-5 h-5 text-emerald-400" />
+          <div className="flex items-center space-x-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-2.5 shadow-lg shadow-emerald-500/10">
+            <Check className="w-5 h-5 text-emerald-400 shrink-0" />
             <div className="text-xs">
-              <span className="text-emerald-300 font-medium block">Ready to Download:</span>
-              <span className="text-slate-300 font-mono">{generatedJob.job_code}.psd</span>
+              <span className="text-emerald-300 font-semibold block">Production PNG Ready:</span>
+              <span className="text-slate-300 font-mono text-[11px] truncate max-w-[200px] block">
+                {generatedJob.filename || `${generatedJob.job_code}_2X2_TSHIRT.png`}
+              </span>
+              <span className="text-slate-400 text-[10px]">
+                {generatedJob.width || 5400}×{generatedJob.height || 5286} px • RGBA Lossless
+              </span>
             </div>
             <a
               href={generatedJob.download_url}
-              download
-              className="ml-2 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-md shadow-emerald-600/30"
+              download={generatedJob.filename || `${generatedJob.job_code}_2X2_TSHIRT.png`}
+              className="ml-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md shadow-emerald-600/30"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Download</span>
+              <Download className="w-4 h-4" />
+              <span>DOWNLOAD PNG</span>
             </a>
           </div>
         )}
@@ -236,16 +361,16 @@ export const DesignGenerator: React.FC = () => {
         </div>
       )}
 
-      {/* Main Grid: Left Controls, Right Preview */}
+      {/* Main Grid: Left Controls, Right 2x2 Preview */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* LEFT COLUMN: Steps 1 - 4 & Fine Tuning */}
-        <div className="lg:col-span-6 space-y-5">
+        {/* LEFT COLUMN: Controls */}
+        <div className="lg:col-span-5 space-y-5">
 
           {/* STEP 1: Garment Color */}
           <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4">
             <label className="text-xs font-semibold text-slate-400 tracking-wider uppercase block mb-3">
-              Step 1: T-Shirt Color
+              Step 1: Primary Garment Color
             </label>
             <div className="grid grid-cols-2 gap-3">
               <button
@@ -280,6 +405,9 @@ export const DesignGenerator: React.FC = () => {
                 {color === 'White' && <Check className="w-4 h-4 text-blue-400" />}
               </button>
             </div>
+            <p className="text-[11px] text-slate-500 mt-2">
+              Note: The final production PNG includes both Black and White views in the 2×2 layout automatically.
+            </p>
           </div>
 
           {/* STEP 2: Garment Style */}
@@ -322,57 +450,43 @@ export const DesignGenerator: React.FC = () => {
             </div>
           </div>
 
-          {/* STEP 3: Print Pattern Selection */}
-          <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
+          {/* STEP 3: Pattern Selector */}
+          <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
               <label className="text-xs font-semibold text-slate-400 tracking-wider uppercase">
-                Step 3: Select Print Pattern
+                Step 3: Pattern Preset
               </label>
-              <span className="text-[11px] text-blue-400 font-medium">{patterns.length} Available</span>
+              <span className="text-xs text-blue-400 font-mono">
+                {patterns.length} Available
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto pr-1">
-              {patterns.map((p) => {
-                const isSelected = p.pattern_id === selectedPatternId;
-                return (
-                  <button
-                    key={p.pattern_id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedPatternId(p.pattern_id);
-                      if (!p.required_uploads.includes('front') && p.required_uploads.includes('back')) {
-                        setPreviewSide('back');
-                      } else {
-                        setPreviewSide('front');
-                      }
-                    }}
-                    className={`p-2.5 rounded-lg border text-left transition-all relative ${
-                      isSelected
-                        ? 'border-blue-500 bg-blue-500/15 shadow-md shadow-blue-500/20'
-                        : 'border-[#1e293d] bg-[#0e1422] hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-white truncate max-w-[170px]">{p.name}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-blue-400 font-medium">
-                        {p.preview_badge}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 line-clamp-1 mt-1">{p.description}</p>
-                  </button>
-                );
-              })}
-            </div>
+            <select
+              value={selectedPatternId}
+              onChange={(e) => setSelectedPatternId(e.target.value)}
+              className="w-full bg-[#0e1422] border border-[#1e293d] text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500"
+            >
+              {patterns.map((p) => (
+                <option key={p.pattern_id} value={p.pattern_id}>
+                  {p.name} ({p.preview_badge})
+                </option>
+              ))}
+            </select>
+            {selectedPattern && (
+              <p className="text-xs text-slate-400 mt-2 bg-[#0a0e17] p-2 rounded border border-[#1e293d]/50">
+                {selectedPattern.description}
+              </p>
+            )}
           </div>
 
           {/* STEP 4: Dynamic Artwork Uploads */}
-          <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4 space-y-4">
+          <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4 space-y-3">
             <label className="text-xs font-semibold text-slate-400 tracking-wider uppercase block">
-              Step 4: Upload Required Artwork
+              Step 4: Upload Artwork
             </label>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Front Upload */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Front Upload Slot */}
               {requiresFront ? (
                 <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${
                   frontArtwork ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-[#1e293d] bg-[#0e1422] hover:border-blue-500/50'
@@ -398,7 +512,7 @@ export const DesignGenerator: React.FC = () => {
                         Replace File
                         <input
                           type="file"
-                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/tiff"
                           className="hidden"
                           onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], 'front')}
                         />
@@ -406,12 +520,16 @@ export const DesignGenerator: React.FC = () => {
                     </div>
                   ) : (
                     <label className="cursor-pointer block py-4">
-                      <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2 group-hover:text-blue-400 transition-colors" />
+                      {isUploadingFront ? (
+                        <RefreshCw className="w-8 h-8 mx-auto text-blue-400 animate-spin mb-2" />
+                      ) : (
+                        <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2 group-hover:text-blue-400 transition-colors" />
+                      )}
                       <span className="text-xs text-blue-400 font-medium block">Upload Front Graphic</span>
                       <span className="text-[10px] text-slate-400 block mt-1">PNG (transparent) or JPG</span>
                       <input
                         type="file"
-                        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                        accept="image/png,image/jpeg,image/webp,image/svg+xml,image/tiff"
                         className="hidden"
                         onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], 'front')}
                       />
@@ -425,7 +543,7 @@ export const DesignGenerator: React.FC = () => {
                 </div>
               )}
 
-              {/* Back Upload */}
+              {/* Back Upload Slot */}
               {requiresBack ? (
                 <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${
                   backArtwork ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-[#1e293d] bg-[#0e1422] hover:border-blue-500/50'
@@ -451,7 +569,7 @@ export const DesignGenerator: React.FC = () => {
                         Replace File
                         <input
                           type="file"
-                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/tiff"
                           className="hidden"
                           onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], 'back')}
                         />
@@ -459,12 +577,16 @@ export const DesignGenerator: React.FC = () => {
                     </div>
                   ) : (
                     <label className="cursor-pointer block py-4">
-                      <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2 group-hover:text-blue-400 transition-colors" />
+                      {isUploadingBack ? (
+                        <RefreshCw className="w-8 h-8 mx-auto text-blue-400 animate-spin mb-2" />
+                      ) : (
+                        <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2 group-hover:text-blue-400 transition-colors" />
+                      )}
                       <span className="text-xs text-blue-400 font-medium block">Upload Back Graphic</span>
                       <span className="text-[10px] text-slate-400 block mt-1">PNG (transparent) or JPG</span>
                       <input
                         type="file"
-                        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                        accept="image/png,image/jpeg,image/webp,image/svg+xml,image/tiff"
                         className="hidden"
                         onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], 'back')}
                       />
@@ -484,11 +606,10 @@ export const DesignGenerator: React.FC = () => {
               <button
                 type="button"
                 onClick={async () => {
-                  // Load sample Naruto image
                   try {
                     const response = await fetch('/mockups/sample_naruto.png');
                     const blob = await response.blob();
-                    const sampleFile = new File([blob], 'sample_artwork.png', { type: 'image/png' });
+                    const sampleFile = new File([blob], 'sample_naruto_master.png', { type: 'image/png' });
                     if (requiresFront) await handleFileUpload(sampleFile, 'front');
                     if (requiresBack) await handleFileUpload(sampleFile, 'back');
                   } catch (e) {
@@ -503,23 +624,38 @@ export const DesignGenerator: React.FC = () => {
             </div>
           </div>
 
-          {/* Fine Tuning Controls for Current View */}
-          <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4 space-y-3">
+          {/* STEP 5: Fine-Tuning Placement & Options */}
+          <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4 space-y-4">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-400 tracking-wider uppercase flex items-center space-x-1.5">
-                <Sliders className="w-3.5 h-3.5 text-blue-400" />
-                <span>Fine-Tune {previewSide.toUpperCase()} Placement</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => handleResetTransform(previewSide)}
-                className="text-xs text-slate-400 hover:text-white flex items-center space-x-1"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Reset</span>
-              </button>
+              <div className="flex items-center space-x-2">
+                <Sliders className="w-4 h-4 text-blue-400" />
+                <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  Step 5: Fine-Tune Placement
+                </span>
+              </div>
+              <div className="flex items-center space-x-1 bg-[#0e1422] p-0.5 rounded-lg border border-[#1e293d]">
+                <button
+                  type="button"
+                  onClick={() => setActiveTuningTab('front')}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-all ${
+                    activeTuningTab === 'front' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Front Zone
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTuningTab('back')}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-all ${
+                    activeTuningTab === 'back' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Back Zone
+                </button>
+              </div>
             </div>
 
+            {/* Sliders Grid */}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
                 <div className="flex justify-between text-slate-400 mb-1">
@@ -528,12 +664,12 @@ export const DesignGenerator: React.FC = () => {
                 </div>
                 <input
                   type="range"
-                  min="-200"
-                  max="200"
+                  min="-300"
+                  max="300"
                   value={currentTransform.offset_x}
                   onChange={(e) => {
                     const val = Number(e.target.value);
-                    if (previewSide === 'front') setFrontTransform(prev => ({ ...prev, offset_x: val }));
+                    if (activeTuningTab === 'front') setFrontTransform(prev => ({ ...prev, offset_x: val }));
                     else setBackTransform(prev => ({ ...prev, offset_x: val }));
                   }}
                   className="w-full accent-blue-500"
@@ -547,12 +683,12 @@ export const DesignGenerator: React.FC = () => {
                 </div>
                 <input
                   type="range"
-                  min="-200"
-                  max="200"
+                  min="-300"
+                  max="300"
                   value={currentTransform.offset_y}
                   onChange={(e) => {
                     const val = Number(e.target.value);
-                    if (previewSide === 'front') setFrontTransform(prev => ({ ...prev, offset_y: val }));
+                    if (activeTuningTab === 'front') setFrontTransform(prev => ({ ...prev, offset_y: val }));
                     else setBackTransform(prev => ({ ...prev, offset_y: val }));
                   }}
                   className="w-full accent-blue-500"
@@ -572,7 +708,7 @@ export const DesignGenerator: React.FC = () => {
                   value={currentTransform.scale_multiplier}
                   onChange={(e) => {
                     const val = Number(e.target.value);
-                    if (previewSide === 'front') setFrontTransform(prev => ({ ...prev, scale_multiplier: val }));
+                    if (activeTuningTab === 'front') setFrontTransform(prev => ({ ...prev, scale_multiplier: val }));
                     else setBackTransform(prev => ({ ...prev, scale_multiplier: val }));
                   }}
                   className="w-full accent-blue-500"
@@ -591,16 +727,60 @@ export const DesignGenerator: React.FC = () => {
                   value={currentTransform.rotation}
                   onChange={(e) => {
                     const val = Number(e.target.value);
-                    if (previewSide === 'front') setFrontTransform(prev => ({ ...prev, rotation: val }));
+                    if (activeTuningTab === 'front') setFrontTransform(prev => ({ ...prev, rotation: val }));
                     else setBackTransform(prev => ({ ...prev, rotation: val }));
                   }}
                   className="w-full accent-blue-500"
                 />
               </div>
             </div>
+
+            {/* Fit Mode Selector & Reset */}
+            <div className="flex items-center justify-between pt-2 border-t border-[#1e293d]/60 text-xs">
+              <div className="flex items-center space-x-2">
+                <span className="text-slate-400">Fit Mode:</span>
+                <select
+                  value={currentTransform.fit_mode || 'contain'}
+                  onChange={(e) => {
+                    const mode = e.target.value;
+                    if (activeTuningTab === 'front') setFrontTransform(prev => ({ ...prev, fit_mode: mode }));
+                    else setBackTransform(prev => ({ ...prev, fit_mode: mode }));
+                  }}
+                  className="bg-[#0e1422] border border-[#1e293d] text-slate-200 rounded px-2 py-1 text-xs focus:outline-none"
+                >
+                  <option value="contain">Contain (Proportional)</option>
+                  <option value="cover">Cover (Fill & Crop)</option>
+                  <option value="stretch">Stretch (Fit Zone)</option>
+                  <option value="original">Original (Native Resolution)</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleResetTransform(activeTuningTab)}
+                className="text-xs text-slate-400 hover:text-white flex items-center space-x-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset</span>
+              </button>
+            </div>
+
+            {/* Include View Labels Option */}
+            <div className="flex items-center justify-between pt-2 border-t border-[#1e293d]/60 text-xs">
+              <div>
+                <span className="text-slate-300 font-medium block">Include View Labels in PNG</span>
+                <span className="text-[10px] text-slate-500">Adds subtle text outside T-shirt graphics (OFF by default)</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={includeLabels}
+                onChange={(e) => setIncludeLabels(e.target.checked)}
+                className="w-4 h-4 accent-blue-500 rounded cursor-pointer"
+              />
+            </div>
           </div>
 
-          {/* STEP 6: GENERATE BUTTON */}
+          {/* STEP 6: MAIN GENERATE BUTTON */}
           <button
             type="button"
             disabled={isGenerating}
@@ -610,45 +790,45 @@ export const DesignGenerator: React.FC = () => {
             {isGenerating ? (
               <>
                 <RefreshCw className="w-5 h-5 animate-spin" />
-                <span>Compiling 2700×2643 PSD Layers...</span>
+                <span>COMPILING 5400×5286 2×2 PNG SHEET...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-5 h-5" />
-                <span>GENERATE PRINT-READY PSD</span>
+                <span>GENERATE PNG</span>
               </>
             )}
           </button>
         </div>
 
-        {/* RIGHT COLUMN: Interactive 2D Mockup Preview */}
-        <div className="lg:col-span-6 space-y-4">
+        {/* RIGHT COLUMN: 2x2 QUAD VIEW PREVIEW */}
+        <div className="lg:col-span-7 space-y-4">
           <div className="bg-[#121927] border border-[#1e293d] rounded-xl p-4 flex flex-col h-full">
-            {/* Preview Toolbar */}
+            {/* Toolbar */}
             <div className="flex items-center justify-between pb-3 border-b border-[#1e293d]">
-              <div className="flex items-center space-x-1.5 bg-[#0e1422] p-1 rounded-lg border border-[#1e293d]">
-                <button
-                  type="button"
-                  onClick={() => setPreviewSide('front')}
-                  className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
-                    previewSide === 'front'
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  FRONT VIEW
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewSide('back')}
-                  className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
-                    previewSide === 'back'
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  BACK VIEW
-                </button>
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5 bg-[#0e1422] p-1 rounded-lg border border-[#1e293d]">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('2x2')}
+                    className={`px-3 py-1 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+                      viewMode === '2x2' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Grid className="w-3.5 h-3.5" />
+                    <span>2×2 Sheet Layout</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('single')}
+                    className={`px-3 py-1 rounded text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+                      viewMode === 'single' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>Focus View</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center space-x-2">
@@ -662,93 +842,66 @@ export const DesignGenerator: React.FC = () => {
                   }`}
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>{showBoundingBox ? 'Hide Print Zone' : 'Show Print Zone'}</span>
+                  <span>{showBoundingBox ? 'Hide Print Zones' : 'Show Print Zones'}</span>
                 </button>
               </div>
             </div>
 
-            {/* Visual Canvas Area */}
-            <div className="relative flex-1 min-h-[460px] bg-[#090d14] rounded-lg mt-3 overflow-hidden flex items-center justify-center p-2 border border-[#1e293d]/60 select-none">
-              
-              {/* Responsive T-shirt Mockup Image */}
-              <div className="relative w-full max-w-[520px] aspect-[2700/2643] flex items-center justify-center">
-                <img
-                  src={currentMockupUrl}
-                  alt={`${color} ${previewSide}`}
-                  className="w-full h-full object-contain pointer-events-none drop-shadow-2xl"
-                />
-
-                {/* Print Zone Boundary Outline */}
-                {showBoundingBox && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${zoneLeftPct}%`,
-                      top: `${zoneTopPct}%`,
-                      width: `${zoneWidthPct}%`,
-                      height: `${zoneHeightPct}%`,
-                    }}
-                    className="border-2 border-dashed border-blue-400/70 bg-blue-500/5 rounded pointer-events-none z-10 flex flex-col justify-between p-1"
+            {/* Single Focus View Sub-Bar */}
+            {viewMode === 'single' && (
+              <div className="flex items-center space-x-2 py-2 border-b border-[#1e293d]/50 text-xs overflow-x-auto">
+                <span className="text-slate-400 shrink-0">Focus view:</span>
+                {(['black_front', 'black_back', 'white_front', 'white_back'] as const).map((vk) => (
+                  <button
+                    key={vk}
+                    type="button"
+                    onClick={() => setFocusedView(vk)}
+                    className={`px-2.5 py-0.5 rounded text-[11px] font-medium transition-all ${
+                      focusedView === vk ? 'bg-indigo-600 text-white' : 'bg-[#0e1422] text-slate-400 hover:text-white'
+                    }`}
                   >
-                    <span className="text-[9px] font-mono text-blue-300 font-bold bg-blue-950/80 px-1 py-0.5 rounded self-start">
-                      {activeZone.name || activeZoneCode}
-                    </span>
-                    <span className="text-[8px] font-mono text-blue-400/80 self-end">
-                      {Math.round(activeZone.width)}×{Math.round(activeZone.height)}px
-                    </span>
-                  </div>
-                )}
-
-                {/* Artwork Layer Overlay */}
-                {currentArtwork && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${zoneLeftPct + artOffsetXPct}%`,
-                      top: `${zoneTopPct + artOffsetYPct}%`,
-                      width: `${zoneWidthPct}%`,
-                      height: `${zoneHeightPct}%`,
-                      transform: `rotate(${currentTransform.rotation}deg) scale(${currentTransform.scale_multiplier})`,
-                      transformOrigin: 'center center',
-                    }}
-                    className="z-20 flex items-center justify-center pointer-events-none transition-transform duration-75"
-                  >
-                    <img
-                      src={currentArtwork.url}
-                      alt="Placed Artwork"
-                      className="max-w-full max-h-full object-contain filter drop-shadow-lg"
-                    />
-                  </div>
-                )}
-
-                {/* Empty Artwork Placeholder Prompt */}
-                {!currentArtwork && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${zoneLeftPct}%`,
-                      top: `${zoneTopPct}%`,
-                      width: `${zoneWidthPct}%`,
-                      height: `${zoneHeightPct}%`,
-                    }}
-                    className="z-10 flex items-center justify-center text-center p-4 pointer-events-none"
-                  >
-                    <span className="text-xs text-slate-400/80 bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800">
-                      Upload {previewSide.toUpperCase()} artwork to preview
-                    </span>
-                  </div>
-                )}
+                    {vk.replace('_', ' ').toUpperCase()}
+                  </button>
+                ))}
               </div>
+            )}
+
+            {/* Canvas Area: 2x2 Sheet or Focused Quadrant */}
+            <div className="relative flex-1 min-h-[520px] bg-[#070a10] rounded-xl mt-3 overflow-hidden p-3 border border-[#1e293d]/60 select-none flex flex-col justify-center">
+              {viewMode === '2x2' ? (
+                /* 2x2 QUAD VIEW LAYOUT (5400x5286 proportions: 2 columns, 2 rows) */
+                <div className="grid grid-cols-2 gap-3 w-full max-w-[620px] mx-auto">
+                  {/* Top-Left: Black Front */}
+                  {renderQuadrant('black_front', 'Black Front', 'front', 'black')}
+
+                  {/* Top-Right: Black Back */}
+                  {renderQuadrant('black_back', 'Black Back', 'back', 'black')}
+
+                  {/* Bottom-Left: White Front */}
+                  {renderQuadrant('white_front', 'White Front', 'front', 'white')}
+
+                  {/* Bottom-Right: White Back */}
+                  {renderQuadrant('white_back', 'White Back', 'back', 'white')}
+                </div>
+              ) : (
+                /* Focused Single Quadrant */
+                <div className="max-w-[420px] w-full mx-auto">
+                  {focusedView === 'black_front' && renderQuadrant('black_front', 'Black Front', 'front', 'black')}
+                  {focusedView === 'black_back' && renderQuadrant('black_back', 'Black Back', 'back', 'black')}
+                  {focusedView === 'white_front' && renderQuadrant('white_front', 'White Front', 'front', 'white')}
+                  {focusedView === 'white_back' && renderQuadrant('white_back', 'White Back', 'back', 'white')}
+                </div>
+              )}
             </div>
 
-            {/* Bottom Info Bar */}
-            <div className="mt-3 pt-3 border-t border-[#1e293d] flex items-center justify-between text-xs text-slate-400">
+            {/* Bottom Status & Info Bar */}
+            <div className="mt-3 pt-3 border-t border-[#1e293d] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-400">
               <div className="flex items-center space-x-2">
-                <Layers className="w-4 h-4 text-blue-400" />
-                <span>Zone: <strong className="text-slate-200">{activeZone.name || activeZoneCode}</strong></span>
+                <Layers className="w-4 h-4 text-emerald-400" />
+                <span>Production Output: <strong className="text-slate-200">5400 × 5286 px (2×2 PNG Sheet)</strong></span>
               </div>
               <span className="font-mono text-[11px] text-slate-400">
-                Coords: X:{Math.round(activeZone.x)} Y:{Math.round(activeZone.y)} ({Math.round(activeZone.width)}×{Math.round(activeZone.height)}px)
+                Front Zone: {frontZone.name} ({Math.round(frontZone.width)}×{Math.round(frontZone.height)}px)
               </span>
             </div>
           </div>

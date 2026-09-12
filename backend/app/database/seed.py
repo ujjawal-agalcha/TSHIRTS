@@ -1,4 +1,5 @@
 import json
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal, Base, engine
 from app.models.garment import TshirtProduct, TshirtColor, TshirtStyle, TshirtSize
@@ -7,8 +8,24 @@ from app.models.pattern import Pattern
 from app.models.inventory import Inventory, Supplier
 from app.models.design_job import DesignJob
 
+def migrate_database():
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(design_jobs)"))]
+        new_cols = [
+            ("output_png_path", "VARCHAR(255)"),
+            ("canvas_width", "INTEGER DEFAULT 5400"),
+            ("canvas_height", "INTEGER DEFAULT 5286"),
+            ("format", "VARCHAR(20) DEFAULT 'PNG'"),
+            ("color_mode", "VARCHAR(20) DEFAULT 'RGBA'"),
+        ]
+        for col_name, col_type in new_cols:
+            if col_name not in cols:
+                conn.execute(text(f"ALTER TABLE design_jobs ADD COLUMN {col_name} {col_type}"))
+        conn.commit()
+
 def seed_database():
     Base.metadata.create_all(bind=engine)
+    migrate_database()
     db: Session = SessionLocal()
     
     try:
