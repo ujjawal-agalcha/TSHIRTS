@@ -8,11 +8,195 @@ from app.models.pattern import Pattern
 from app.models.inventory import Inventory, Supplier
 from app.models.design_job import DesignJob
 
+DEFAULT_PATTERNS_DATA = [
+    {
+        "pattern_id": "front_left_chest",
+        "name": "Front Left Chest",
+        "description": "Subtle pocket/heart logo on front left, blank back",
+        "category": "Front-Only",
+        "preview_badge": "Front Only",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "LEFT_CHEST", "label": "Left Chest Logo", "required": True}]),
+        "back_slots": json.dumps([]),
+        "required_uploads": json.dumps(["front"]),
+        "sort_order": 1
+    },
+    {
+        "pattern_id": "front_center_small",
+        "name": "Front Center Small",
+        "description": "Minimal centered graphic or upper typography on front chest",
+        "category": "Front-Only",
+        "preview_badge": "Front Only",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "UPPER_CENTER", "label": "Upper Center Graphic", "required": True}]),
+        "back_slots": json.dumps([]),
+        "required_uploads": json.dumps(["front"]),
+        "sort_order": 2
+    },
+    {
+        "pattern_id": "front_center_large",
+        "name": "Front Center Large",
+        "description": "Standard prominent center chest artwork",
+        "category": "Front-Only",
+        "preview_badge": "Front Only",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "CENTER_CHEST", "label": "Center Chest Artwork", "required": True}]),
+        "back_slots": json.dumps([]),
+        "required_uploads": json.dumps(["front"]),
+        "sort_order": 3
+    },
+    {
+        "pattern_id": "front_full",
+        "name": "Front Full",
+        "description": "Full oversized front graphic spanning chest to lower torso",
+        "category": "Front-Only",
+        "preview_badge": "Front Only",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "FULL_FRONT", "label": "Full Front Artwork", "required": True}]),
+        "back_slots": json.dumps([]),
+        "required_uploads": json.dumps(["front"]),
+        "sort_order": 4
+    },
+    {
+        "pattern_id": "back_center",
+        "name": "Back Center",
+        "description": "Centered graphic on the back with blank front",
+        "category": "Back-Only",
+        "preview_badge": "Back Only",
+        "front_slots": json.dumps([]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "BACK_CENTER", "label": "Back Center Artwork", "required": True}]),
+        "required_uploads": json.dumps(["back"]),
+        "sort_order": 5
+    },
+    {
+        "pattern_id": "back_full",
+        "name": "Back Full",
+        "description": "Large oversized statement artwork covering majority of the back",
+        "category": "Back-Only",
+        "preview_badge": "Back Only",
+        "front_slots": json.dumps([]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
+        "required_uploads": json.dumps(["back"]),
+        "sort_order": 6
+    },
+    {
+        "pattern_id": "small_front_full_back",
+        "name": "Left Chest + Back Full",
+        "description": "Classic streetwear combination: minimal heart logo front + bold full back",
+        "category": "Dual-Print",
+        "preview_badge": "Front + Back",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "LEFT_CHEST", "label": "Left Chest Logo", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 7
+    },
+    {
+        "pattern_id": "front_center_back_full",
+        "name": "Front Center + Back Full",
+        "description": "Medium front center graphic paired with an oversized full back print",
+        "category": "Dual-Print",
+        "preview_badge": "Front + Back",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "CENTER_CHEST", "label": "Front Center Graphic", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 8
+    },
+    {
+        "pattern_id": "front_full_back_full",
+        "name": "Front Full + Back Full",
+        "description": "Heavy double-sided oversized graphics front and back",
+        "category": "Dual-Print",
+        "preview_badge": "Front + Back",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "FULL_FRONT", "label": "Full Front Artwork", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 9
+    },
+    {
+        "pattern_id": "front_small_back_center",
+        "name": "Front Small + Back Center",
+        "description": "Upper front typography with balanced center back graphic",
+        "category": "Dual-Print",
+        "preview_badge": "Front + Back",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "UPPER_CENTER", "label": "Front Upper Graphic", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "BACK_CENTER", "label": "Back Center Graphic", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 10
+    },
+    {
+        "pattern_id": "front_typography_back_graphic",
+        "name": "Front Typography + Back Graphic",
+        "description": "Editorial upper chest typography combined with large artistic back illustration",
+        "category": "Dual-Print",
+        "preview_badge": "Front + Back",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "UPPER_CENTER", "label": "Front Typography", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Back Illustration", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 11
+    },
+    {
+        "pattern_id": "back_only",
+        "name": "Back Only",
+        "description": "Pure back canvas design, perfectly clean front",
+        "category": "Back-Only",
+        "preview_badge": "Back Only",
+        "front_slots": json.dumps([]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Graphic", "required": True}]),
+        "required_uploads": json.dumps(["back"]),
+        "sort_order": 12
+    },
+    {
+        "pattern_id": "front_only",
+        "name": "Front Only",
+        "description": "High impact front art piece with unprinted back",
+        "category": "Front-Only",
+        "preview_badge": "Front Only",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "FULL_FRONT", "label": "Front Artwork", "required": True}]),
+        "back_slots": json.dumps([]),
+        "required_uploads": json.dumps(["front"]),
+        "sort_order": 13
+    },
+    {
+        "pattern_id": "small_logo_front_large_graphic_back",
+        "name": "Small Logo Front + Large Graphic Back",
+        "description": "Left heart embroidered-style logo with massive poster-style back print",
+        "category": "Dual-Print",
+        "preview_badge": "Front + Back",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "LEFT_CHEST", "label": "Front Logo", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Back Poster Artwork", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 14
+    },
+    {
+        "pattern_id": "custom_front_custom_back",
+        "name": "Custom Front + Custom Back",
+        "description": "Fully custom configurable placement on both front and back",
+        "category": "Custom",
+        "preview_badge": "Custom",
+        "front_slots": json.dumps([{"slot": "front", "zone_code": "FRONT_CUSTOM", "label": "Custom Front Artwork", "required": True}]),
+        "back_slots": json.dumps([{"slot": "back", "zone_code": "BACK_CUSTOM", "label": "Custom Back Artwork", "required": True}]),
+        "required_uploads": json.dumps(["front", "back"]),
+        "sort_order": 15
+    }
+]
+
+def seed_default_patterns(db: Session):
+    """
+    Safely seeds or restores default patterns without overwriting or deleting user-created patterns.
+    """
+    for p_dict in DEFAULT_PATTERNS_DATA:
+        existing = db.query(Pattern).filter(Pattern.pattern_id == p_dict["pattern_id"]).first()
+        if not existing:
+            pattern = Pattern(**p_dict)
+            db.add(pattern)
+        else:
+            # Update name if previously had legacy label
+            if existing.pattern_id == "small_front_full_back" and existing.name != "Left Chest + Back Full":
+                existing.name = "Left Chest + Back Full"
+    db.commit()
+
 def migrate_database():
     with engine.connect() as conn:
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info(design_jobs)"))]
         new_cols = [
             ("output_png_path", "VARCHAR(255)"),
+            ("output_mockup_png_path", "VARCHAR(255)"),
             ("canvas_width", "INTEGER DEFAULT 5400"),
             ("canvas_height", "INTEGER DEFAULT 5286"),
             ("format", "VARCHAR(20) DEFAULT 'PNG'"),
@@ -213,177 +397,8 @@ def seed_database():
             db.add_all(zones)
             db.commit()
 
-        # 6. Patterns (15 Patterns)
-        if db.query(Pattern).count() == 0:
-            patterns = [
-                Pattern(
-                    pattern_id="front_left_chest",
-                    name="Front Left Chest",
-                    description="Subtle pocket/heart logo on front left, blank back",
-                    category="Front-Only",
-                    preview_badge="Front Only",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "LEFT_CHEST", "label": "Left Chest Logo", "required": True}]),
-                    back_slots=json.dumps([]),
-                    required_uploads=json.dumps(["front"]),
-                    sort_order=1
-                ),
-                Pattern(
-                    pattern_id="front_center_small",
-                    name="Front Center Small",
-                    description="Minimal centered graphic or upper typography on front chest",
-                    category="Front-Only",
-                    preview_badge="Front Only",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "UPPER_CENTER", "label": "Upper Center Graphic", "required": True}]),
-                    back_slots=json.dumps([]),
-                    required_uploads=json.dumps(["front"]),
-                    sort_order=2
-                ),
-                Pattern(
-                    pattern_id="front_center_large",
-                    name="Front Center Large",
-                    description="Standard prominent center chest artwork",
-                    category="Front-Only",
-                    preview_badge="Front Only",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "CENTER_CHEST", "label": "Center Chest Artwork", "required": True}]),
-                    back_slots=json.dumps([]),
-                    required_uploads=json.dumps(["front"]),
-                    sort_order=3
-                ),
-                Pattern(
-                    pattern_id="front_full",
-                    name="Front Full",
-                    description="Full oversized front graphic spanning chest to lower torso",
-                    category="Front-Only",
-                    preview_badge="Front Only",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "FULL_FRONT", "label": "Full Front Artwork", "required": True}]),
-                    back_slots=json.dumps([]),
-                    required_uploads=json.dumps(["front"]),
-                    sort_order=4
-                ),
-                Pattern(
-                    pattern_id="back_center",
-                    name="Back Center",
-                    description="Centered graphic on the back with blank front",
-                    category="Back-Only",
-                    preview_badge="Back Only",
-                    front_slots=json.dumps([]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "BACK_CENTER", "label": "Back Center Artwork", "required": True}]),
-                    required_uploads=json.dumps(["back"]),
-                    sort_order=5
-                ),
-                Pattern(
-                    pattern_id="back_full",
-                    name="Back Full",
-                    description="Large oversized statement artwork covering majority of the back",
-                    category="Back-Only",
-                    preview_badge="Back Only",
-                    front_slots=json.dumps([]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
-                    required_uploads=json.dumps(["back"]),
-                    sort_order=6
-                ),
-                Pattern(
-                    pattern_id="small_front_full_back",
-                    name="Small Front + Full Back",
-                    description="Classic streetwear combination: minimal heart logo front + bold full back",
-                    category="Dual-Print",
-                    preview_badge="Front + Back",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "LEFT_CHEST", "label": "Left Chest Logo", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=7
-                ),
-                Pattern(
-                    pattern_id="front_center_back_full",
-                    name="Front Center + Back Full",
-                    description="Medium front center graphic paired with an oversized full back print",
-                    category="Dual-Print",
-                    preview_badge="Front + Back",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "CENTER_CHEST", "label": "Front Center Graphic", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=8
-                ),
-                Pattern(
-                    pattern_id="front_full_back_full",
-                    name="Front Full + Back Full",
-                    description="Heavy double-sided oversized graphics front and back",
-                    category="Dual-Print",
-                    preview_badge="Front + Back",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "FULL_FRONT", "label": "Full Front Artwork", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Artwork", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=9
-                ),
-                Pattern(
-                    pattern_id="front_small_back_center",
-                    name="Front Small + Back Center",
-                    description="Upper front typography with balanced center back graphic",
-                    category="Dual-Print",
-                    preview_badge="Front + Back",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "UPPER_CENTER", "label": "Front Upper Graphic", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "BACK_CENTER", "label": "Back Center Graphic", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=10
-                ),
-                Pattern(
-                    pattern_id="front_typography_back_graphic",
-                    name="Front Typography + Back Graphic",
-                    description="Editorial upper chest typography combined with large artistic back illustration",
-                    category="Dual-Print",
-                    preview_badge="Front + Back",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "UPPER_CENTER", "label": "Front Typography", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Back Illustration", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=11
-                ),
-                Pattern(
-                    pattern_id="back_only",
-                    name="Back Only",
-                    description="Pure back canvas design, perfectly clean front",
-                    category="Back-Only",
-                    preview_badge="Back Only",
-                    front_slots=json.dumps([]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Full Back Graphic", "required": True}]),
-                    required_uploads=json.dumps(["back"]),
-                    sort_order=12
-                ),
-                Pattern(
-                    pattern_id="front_only",
-                    name="Front Only",
-                    description="High impact front art piece with unprinted back",
-                    category="Front-Only",
-                    preview_badge="Front Only",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "FULL_FRONT", "label": "Front Artwork", "required": True}]),
-                    back_slots=json.dumps([]),
-                    required_uploads=json.dumps(["front"]),
-                    sort_order=13
-                ),
-                Pattern(
-                    pattern_id="small_logo_front_large_graphic_back",
-                    name="Small Logo Front + Large Graphic Back",
-                    description="Left heart embroidered-style logo with massive poster-style back print",
-                    category="Dual-Print",
-                    preview_badge="Front + Back",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "LEFT_CHEST", "label": "Front Logo", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "FULL_BACK", "label": "Back Poster Artwork", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=14
-                ),
-                Pattern(
-                    pattern_id="custom_front_custom_back",
-                    name="Custom Front + Custom Back",
-                    description="Fully custom configurable placement on both front and back",
-                    category="Custom",
-                    preview_badge="Custom",
-                    front_slots=json.dumps([{"slot": "front", "zone_code": "FRONT_CUSTOM", "label": "Custom Front Artwork", "required": True}]),
-                    back_slots=json.dumps([{"slot": "back", "zone_code": "BACK_CUSTOM", "label": "Custom Back Artwork", "required": True}]),
-                    required_uploads=json.dumps(["front", "back"]),
-                    sort_order=15
-                )
-            ]
-            db.add_all(patterns)
-            db.commit()
+        # 6. Patterns (15 Default Patterns, non-destructive individual check)
+        seed_default_patterns(db)
 
         # 7. Suppliers & Inventory
         if db.query(Supplier).count() == 0:

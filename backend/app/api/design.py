@@ -21,7 +21,7 @@ async def upload_artwork(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    valid_exts = [".png", ".jpg", ".jpeg", ".webp", ".svg"]
+    valid_exts = [".png", ".jpg", ".jpeg", ".webp", ".svg", ".tif", ".tiff"]
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in valid_exts:
         raise HTTPException(status_code=400, detail=f"Unsupported format. Allowed: {', '.join(valid_exts)}")
@@ -56,12 +56,15 @@ def preview_design_2x2(
 ):
     try:
         transforms_dict = {k: v.model_dump() for k, v in payload.transforms.items()}
+        mockup_dict = payload.mockup_params.model_dump() if payload.mockup_params else None
         preview_url = DesignService.generate_2x2_preview(
             pattern_id=payload.pattern_id,
             front_artwork_id=payload.front_artwork_id,
             back_artwork_id=payload.back_artwork_id,
             transforms=transforms_dict,
             include_labels=payload.include_labels,
+            mode=payload.mode,
+            mockup_params=mockup_dict,
             db=db
         )
         return {"preview_url": preview_url}
@@ -75,6 +78,7 @@ def generate_design(
 ):
     try:
         transforms_dict = {k: v.model_dump() for k, v in payload.transforms.items()}
+        mockup_dict = payload.mockup_params.model_dump() if payload.mockup_params else None
         job = DesignService.generate_print_ready_png(
             color=payload.color,
             style=payload.style,
@@ -83,6 +87,8 @@ def generate_design(
             back_artwork_id=payload.back_artwork_id,
             transforms=transforms_dict,
             include_labels=payload.include_labels,
+            generate_mockup=payload.generate_mockup,
+            mockup_params=mockup_dict,
             db=db
         )
         
@@ -93,7 +99,13 @@ def generate_design(
         else:
             res.filename = f"{job.job_code}.png"
             res.png_url = f"/generated/{res.filename}"
-        res.download_url = f"/api/design/download/{job.id}"
+
+        if job.output_mockup_png_path:
+            mockup_base = os.path.basename(job.output_mockup_png_path)
+            res.mockup_png_url = f"/generated/{mockup_base}"
+            res.mockup_download_url = f"/api/design/download/{job.id}?type=mockup"
+
+        res.download_url = f"/api/design/download/{job.id}?type=production"
         res.width = job.canvas_width or 5400
         res.height = job.canvas_height or 5286
         res.format = "PNG"
@@ -108,13 +120,34 @@ def generate_design(
 @router.get("/design/download/{job_id}")
 def download_generated_design(
     job_id: int,
+    type: str = "production",
     db: Session = Depends(get_db)
 ):
     job = db.query(DesignJob).filter(DesignJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Design job not found.")
 
-    # Primary production output: PNG
+    target_type = (type or "production").lower()
+
+    # If realistic mockup is requested
+    if target_type == "mockup":
+        if job.output_mockup_png_path and os.path.exists(job.output_mockup_png_path):
+            filename = os.path.basename(job.output_mockup_png_path)
+            return FileResponse(
+                path=job.output_mockup_png_path,
+                media_type="image/png",
+                filename=filename
+            )
+        # Fallback to production if mockup wasn't generated
+        elif job.output_png_path and os.path.exists(job.output_png_path):
+            filename = os.path.basename(job.output_png_path)
+            return FileResponse(
+                path=job.output_png_path,
+                media_type="image/png",
+                filename=filename
+            )
+
+    # Primary production output: Clean PNG
     if job.output_png_path and os.path.exists(job.output_png_path):
         filename = os.path.basename(job.output_png_path)
         return FileResponse(

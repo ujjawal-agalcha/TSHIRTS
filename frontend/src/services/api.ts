@@ -34,13 +34,38 @@ export const ApiService = {
   },
 
   // Patterns
-  getPatterns: async (): Promise<Pattern[]> => {
-    const res = await api.get('/patterns');
+  getPatterns: async (include_inactive: boolean = false): Promise<Pattern[]> => {
+    const res = await api.get('/patterns', { params: { include_inactive } });
     return res.data;
   },
 
   createPattern: async (patternData: Partial<Pattern>): Promise<Pattern> => {
     const res = await api.post('/patterns', patternData);
+    return res.data;
+  },
+
+  updatePattern: async (patternId: string, data: Partial<Pattern>): Promise<Pattern> => {
+    const res = await api.put(`/patterns/${patternId}`, data);
+    return res.data;
+  },
+
+  togglePattern: async (patternId: string): Promise<Pattern> => {
+    const res = await api.patch(`/patterns/${patternId}/toggle`);
+    return res.data;
+  },
+
+  duplicatePattern: async (patternId: string): Promise<Pattern> => {
+    const res = await api.post(`/patterns/${patternId}/duplicate`);
+    return res.data;
+  },
+
+  deletePattern: async (patternId: string): Promise<{ message: string }> => {
+    const res = await api.delete(`/patterns/${patternId}`);
+    return res.data;
+  },
+
+  restoreDefaultPatterns: async (): Promise<Pattern[]> => {
+    const res = await api.post('/patterns/restore-defaults');
     return res.data;
   },
 
@@ -74,6 +99,8 @@ export const ApiService = {
     back_artwork_id?: string;
     transforms: Record<string, SlotTransform>;
     include_labels?: boolean;
+    generate_mockup?: boolean;
+    mockup_params?: any;
   }): Promise<DesignJob> => {
     const res = await api.post('/design/generate', payload);
     return res.data;
@@ -98,6 +125,8 @@ export const ApiService = {
     back_artwork_id?: string;
     transforms: Record<string, SlotTransform>;
     include_labels?: boolean;
+    mode?: 'flat' | 'realistic';
+    mockup_params?: any;
   }): Promise<{ preview_url: string }> => {
     const res = await api.post('/design/preview-2x2', payload);
     return res.data;

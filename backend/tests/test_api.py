@@ -140,4 +140,4 @@ def test_ai_assistant_deterministic_flow():
     })
     assert chat_res2.status_code == 200
     reply2 = chat_res2.json()["reply"]
-    assert "Small Front + Full Back" in reply2
+    assert ("Left Chest + Back Full" in reply2 or "Small Front + Full Back" in reply2)

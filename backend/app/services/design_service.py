@@ -326,16 +326,19 @@ class DesignService:
         color: str,
         style: str,
         pattern_id: str,
-        front_artwork_id: Optional[str],
-        back_artwork_id: Optional[str],
-        transforms: Dict[str, Any],
-        include_labels: bool,
-        db: Session
+        front_artwork_id: Optional[str] = None,
+        back_artwork_id: Optional[str] = None,
+        transforms: Dict[str, Any] = None,
+        include_labels: bool = False,
+        generate_mockup: bool = True,
+        mockup_params: Optional[Dict[str, Any]] = None,
+        db: Session = None
     ) -> DesignJob:
         """
-        Executes production 2x2 PNG generation (5400x5286 px) containing:
-        Top-Left: Black Front, Top-Right: Black Back,
-        Bottom-Left: White Front, Bottom-Right: White Back.
+        Executes production 2x2 PNG generation:
+        1. Clean Production PNG (unaltered artwork placement for print production)
+        2. Photorealistic Mockup PNG (folds, wrinkles, fabric texture, lighting interaction)
+        Both outputs are saved separately at full resolution (e.g. 5400x5286 px).
         """
         pattern = db.query(Pattern).filter(Pattern.pattern_id == pattern_id).first()
         if not pattern:
@@ -377,35 +380,55 @@ class DesignService:
         front_tf = transforms.get("front", {})
         back_tf = transforms.get("back", {})
 
-        # Render all four views
-        blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf)
-        blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf)
-        wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf)
-        wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf)
-
-        # Composite into 2x2 sheet at 5400 x 5286 px
-        sheet_2x2 = PNGProcessor.create_2x2_sheet(
-            black_front=blk_front,
-            black_back=blk_back,
-            white_front=wht_front,
-            white_back=wht_back,
-            include_labels=include_labels
-        )
-
         now = datetime.utcnow()
         timestamp_str = now.strftime("%Y%m%d_%H%M%S")
         safe_pattern_code = pattern_id.upper().replace("-", "_")
         job_code = f"DESIGNJOB_{timestamp_str}_{safe_pattern_code}"
-        png_filename = f"{job_code}_2X2_TSHIRT.png"
+
+        # 1. RENDER CLEAN PRODUCTION 2x2 PNG (No artificial distortion/blend)
+        blk_front_prod = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=False)
+        blk_back_prod = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=False)
+        wht_front_prod = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=False)
+        wht_back_prod = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=False)
+
+        sheet_prod = PNGProcessor.create_2x2_sheet(
+            black_front=blk_front_prod,
+            black_back=blk_back_prod,
+            white_front=wht_front_prod,
+            white_back=wht_back_prod,
+            include_labels=include_labels
+        )
+
+        png_filename = f"tshirt_{pattern_id}_{job_code}_production.png"
         png_output_path = os.path.join(GENERATED_DIR, png_filename)
+        PNGProcessor.export_png(sheet_prod, png_output_path)
+
         preview_png_filename = f"{job_code}_preview.png"
         preview_png_path = os.path.join(GENERATED_DIR, preview_png_filename)
+        PNGProcessor.export_web_preview(sheet_prod, preview_png_path, max_width=1600)
 
-        # Export high-res production PNG & web preview
-        PNGProcessor.export_png(sheet_2x2, png_output_path)
-        PNGProcessor.export_web_preview(sheet_2x2, preview_png_path, max_width=1600)
+        # 2. RENDER REALISTIC MOCKUP 2x2 PNG (Fabric interaction, folds, texture)
+        mockup_output_path = None
+        if generate_mockup:
+            blk_front_mock = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=True, mockup_params=mockup_params)
+            blk_back_mock = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=True, mockup_params=mockup_params)
+            wht_front_mock = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=True, mockup_params=mockup_params)
+            wht_back_mock = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=True, mockup_params=mockup_params)
+
+            sheet_mock = PNGProcessor.create_2x2_sheet(
+                black_front=blk_front_mock,
+                black_back=blk_back_mock,
+                white_front=wht_front_mock,
+                white_back=wht_back_mock,
+                include_labels=include_labels
+            )
+
+            mockup_filename = f"tshirt_{pattern_id}_{job_code}_mockup.png"
+            mockup_output_path = os.path.join(GENERATED_DIR, mockup_filename)
+            PNGProcessor.export_png(sheet_mock, mockup_output_path)
 
         file_size = os.path.getsize(png_output_path) if os.path.exists(png_output_path) else 0
+        final_w, final_h = sheet_prod.size
 
         # Save DesignJob
         job = DesignJob(
@@ -418,10 +441,11 @@ class DesignService:
             front_artwork_path=front_artwork_id,
             back_artwork_path=back_artwork_id,
             output_png_path=png_output_path,
+            output_mockup_png_path=mockup_output_path,
             preview_png_path=preview_png_path,
             file_size_bytes=file_size,
-            canvas_width=5400,
-            canvas_height=5286,
+            canvas_width=final_w,
+            canvas_height=final_h,
             format="PNG",
             color_mode="RGBA",
             placement_config=json.dumps(transforms),
@@ -438,8 +462,9 @@ class DesignService:
                 "style": style,
                 "pattern_id": pattern_id,
                 "format": "PNG",
-                "resolution": "5400x5286",
-                "file_size": file_size
+                "resolution": f"{final_w}x{final_h}",
+                "file_size": file_size,
+                "mockup_generated": bool(mockup_output_path)
             })
         )
         db.add(event)
@@ -453,14 +478,19 @@ class DesignService:
         pattern_id: str,
         front_artwork_id: Optional[str],
         back_artwork_id: Optional[str],
-        transforms: Dict[str, Any],
-        include_labels: bool,
-        db: Session
+        transforms: Optional[Dict[str, Any]] = None,
+        include_labels: bool = False,
+        mode: str = "flat",
+        mockup_params: Optional[Dict[str, Any]] = None,
+        db: Session = None
     ) -> str:
         """
-        Creates a fast, web-scaled 2x2 preview sheet using the exact same rendering engine.
+        Creates a fast, web-scaled 2x2 preview sheet using the exact same authoritative rendering pipeline.
+        mode="flat": clean placement preview
+        mode="realistic": photorealistic mockup with fabric folds, wrinkles, and texture
         Returns the relative URL for frontend display.
         """
+        transforms = transforms or {}
         pattern = db.query(Pattern).filter(Pattern.pattern_id == pattern_id).first()
         reqs = PatternEngine.get_pattern_requirements(pattern) if pattern else {"requires_front": True, "requires_back": False}
 
@@ -491,10 +521,12 @@ class DesignService:
         front_tf = transforms.get("front", {})
         back_tf = transforms.get("back", {})
 
-        blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf)
-        blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf)
-        wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf)
-        wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf)
+        is_realistic = (mode == "realistic")
+
+        blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=is_realistic, mockup_params=mockup_params)
+        blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=is_realistic, mockup_params=mockup_params)
+        wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=is_realistic, mockup_params=mockup_params)
+        wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=is_realistic, mockup_params=mockup_params)
 
         sheet_2x2 = PNGProcessor.create_2x2_sheet(
             black_front=blk_front,

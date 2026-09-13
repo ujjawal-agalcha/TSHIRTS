@@ -30,7 +30,10 @@ export function App() {
     }
   };
 
+  const [selectedPatternId, setSelectedPatternId] = useState<string>('small_front_full_back');
+
   const handleSelectPatternForDesign = (patternId: string) => {
+    setSelectedPatternId(patternId);
     setCurrentTab('generator');
   };
 
@@ -46,7 +49,7 @@ export function App() {
       {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto">
         {currentTab === 'dashboard' && <Dashboard onNavigate={setCurrentTab} />}
-        {currentTab === 'generator' && <DesignGenerator />}
+        {currentTab === 'generator' && <DesignGenerator initialPatternId={selectedPatternId} />}
         {currentTab === 'patterns' && <PatternLibrary onSelectPatternForDesign={handleSelectPatternForDesign} />}
         {currentTab === 'templates' && <TemplateEditor />}
         {currentTab === 'inventory' && <InventoryModule />}

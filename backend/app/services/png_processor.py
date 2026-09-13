@@ -1,6 +1,7 @@
 import os
 from typing import Tuple, Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
+from app.services.mockup_blender import MockupBlender
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 TEMPLATES_EXTRACTED_DIR = os.path.join(BASE_DIR, "templates", "extracted")
@@ -160,11 +161,14 @@ class PNGProcessor:
         view_key: str,
         artwork_img: Optional[Image.Image] = None,
         zone_coords: Optional[Dict[str, Any]] = None,
-        transform: Optional[Dict[str, Any]] = None
+        transform: Optional[Dict[str, Any]] = None,
+        realistic: bool = False,
+        mockup_params: Optional[Dict[str, Any]] = None
     ) -> Image.Image:
         """
         Renders a single 2700x2643 shirt view with artwork properly positioned if supplied.
         view_key: 'black_front', 'white_front', 'black_back', 'white_back'
+        When realistic=True, applies authentic fabric fold/crease shading, texture, and subtle displacement.
         """
         shirt = PNGProcessor.load_template(view_key)
         
@@ -197,7 +201,23 @@ class PNGProcessor:
 
             abs_x = int(round(zone_x + rel_x))
             abs_y = int(round(zone_y + rel_y))
-            shirt = PNGProcessor.composite_artwork(shirt, transformed_art, abs_x, abs_y)
+
+            if realistic:
+                mp = mockup_params or {}
+                shirt = MockupBlender.blend_artwork(
+                    shirt_img=shirt,
+                    artwork_img=transformed_art,
+                    x=abs_x,
+                    y=abs_y,
+                    blend_strength=float(mp.get("blend_strength", 80.0)),
+                    print_opacity=float(mp.get("print_opacity", 100.0)),
+                    fabric_deformation=float(mp.get("fabric_deformation", 25.0)),
+                    fabric_texture=float(mp.get("fabric_texture", 40.0)),
+                    shading_strength=float(mp.get("shading_strength", 50.0)),
+                    blend_mode=mp.get("blend_mode", "auto")
+                )
+            else:
+                shirt = PNGProcessor.composite_artwork(shirt, transformed_art, abs_x, abs_y)
 
         return shirt
 
@@ -210,27 +230,37 @@ class PNGProcessor:
         include_labels: bool = False
     ) -> Image.Image:
         """
-        Creates the production 2x2 sheet at exactly 5400 x 5286 px:
+        Creates the 2x2 sheet with resolution dynamically calculated from actual template assets:
+        canvas_width = black_front.width + black_back.width (e.g. 5400 px)
+        canvas_height = black_front.height + white_front.height (e.g. 5286 px)
         TOP LEFT:     Black Front (x=0, y=0)
-        TOP RIGHT:    Black Back  (x=2700, y=0)
-        BOTTOM LEFT:  White Front (x=0, y=2643)
-        BOTTOM RIGHT: White Back  (x=2700, y=2643)
+        TOP RIGHT:    Black Back  (x=black_front.width, y=0)
+        BOTTOM LEFT:  White Front (x=0, y=black_front.height)
+        BOTTOM RIGHT: White Back  (x=black_front.width, y=black_front.height)
         Preserves alpha/transparency.
         """
-        sheet = Image.new("RGBA", (FINAL_CANVAS_WIDTH, FINAL_CANVAS_HEIGHT), (0, 0, 0, 0))
+        top_w = black_front.width + black_back.width
+        bottom_w = white_front.width + white_back.width
+        canvas_w = max(top_w, bottom_w)
+
+        left_h = black_front.height + white_front.height
+        right_h = black_back.height + white_back.height
+        canvas_h = max(left_h, right_h)
+
+        sheet = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
         # Paste views at exact pixel offsets
         # Top-Left: Black Front
         sheet.paste(black_front, (0, 0), black_front)
 
         # Top-Right: Black Back
-        sheet.paste(black_back, (TEMPLATE_WIDTH, 0), black_back)
+        sheet.paste(black_back, (black_front.width, 0), black_back)
 
         # Bottom-Left: White Front
-        sheet.paste(white_front, (0, TEMPLATE_HEIGHT), white_front)
+        sheet.paste(white_front, (0, black_front.height), white_front)
 
         # Bottom-Right: White Back
-        sheet.paste(white_back, (TEMPLATE_WIDTH, TEMPLATE_HEIGHT), white_back)
+        sheet.paste(white_back, (black_front.width, black_front.height), white_back)
 
         if include_labels:
             draw = ImageDraw.Draw(sheet)

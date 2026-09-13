@@ -66,6 +66,7 @@ class PatternResponse(BaseModel):
     required_uploads: List[str] = []
     is_active: bool
     sort_order: int
+    is_custom: bool = False
 
 class PatternCreate(BaseModel):
     pattern_id: str
@@ -76,6 +77,26 @@ class PatternCreate(BaseModel):
     front_slots: List[Dict[str, Any]] = []
     back_slots: List[Dict[str, Any]] = []
     required_uploads: List[str] = ["front"]
+
+class PatternUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    preview_badge: Optional[str] = None
+    front_slots: Optional[List[Dict[str, Any]]] = None
+    back_slots: Optional[List[Dict[str, Any]]] = None
+    required_uploads: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+# --- Mockup & Blending Parameters ---
+class MockupParams(BaseModel):
+    blend_strength: float = 80.0
+    print_opacity: float = 100.0
+    fabric_deformation: float = 25.0
+    fabric_texture: float = 40.0
+    shading_strength: float = 50.0
+    blend_mode: str = "auto" # auto, normal, multiply, overlay, soft_light, darken, screen
 
 # --- Design Generator ---
 class SlotTransform(BaseModel):
@@ -93,6 +114,8 @@ class GenerateDesignRequest(BaseModel):
     back_artwork_id: Optional[str] = None
     transforms: Dict[str, SlotTransform] = Field(default_factory=dict)
     include_labels: bool = False
+    generate_mockup: bool = True
+    mockup_params: Optional[MockupParams] = None
 
 class PreviewDesignRequest(BaseModel):
     color: str
@@ -108,6 +131,8 @@ class Preview2x2Request(BaseModel):
     back_artwork_id: Optional[str] = None
     transforms: Dict[str, SlotTransform] = Field(default_factory=dict)
     include_labels: bool = False
+    mode: str = "flat" # "flat" | "realistic"
+    mockup_params: Optional[MockupParams] = None
 
 class DesignJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -122,9 +147,12 @@ class DesignJobResponse(BaseModel):
     error_message: Optional[str] = None
     output_psd_path: Optional[str] = None
     output_png_path: Optional[str] = None
+    output_mockup_png_path: Optional[str] = None
     preview_png_path: Optional[str] = None
     png_url: Optional[str] = None
+    mockup_png_url: Optional[str] = None
     download_url: Optional[str] = None
+    mockup_download_url: Optional[str] = None
     file_size_bytes: int = 0
     width: int = 5400
     height: int = 5286

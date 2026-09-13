@@ -20,6 +20,7 @@ class DesignJob(Base):
     
     output_psd_path = Column(String(255), nullable=True)
     output_png_path = Column(String(255), nullable=True)
+    output_mockup_png_path = Column(String(255), nullable=True)
     preview_png_path = Column(String(255), nullable=True)
     file_size_bytes = Column(Integer, default=0)
     canvas_width = Column(Integer, default=5400)

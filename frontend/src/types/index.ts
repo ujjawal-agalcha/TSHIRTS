@@ -57,6 +57,15 @@ export interface SlotTransform {
   fit_mode?: string;
 }
 
+export interface MockupParams {
+  blend_strength: number;
+  print_opacity: number;
+  fabric_deformation: number;
+  fabric_texture: number;
+  shading_strength: number;
+  blend_mode: string;
+}
+
 export interface ArtworkUploadResult {
   artwork_id: string;
   original_name: string;
@@ -84,10 +93,13 @@ export interface DesignJob {
   error_message?: string;
   output_psd_path?: string;
   output_png_path?: string;
+  output_mockup_png_path?: string;
   preview_png_path?: string;
   png_url?: string;
+  mockup_png_url?: string;
   file_size_bytes: number;
   download_url?: string;
+  mockup_download_url?: string;
   width?: number;
   height?: number;
   format?: string;
