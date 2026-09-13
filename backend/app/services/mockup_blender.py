@@ -2,7 +2,9 @@ import os
 from typing import Dict, Any, Optional, Tuple
 import numpy as np
 from PIL import Image
+# pyrefly: ignore [missing-import]
 import cv2
+# pyrefly: ignore [missing-import]
 
 class MockupBlender:
     """
