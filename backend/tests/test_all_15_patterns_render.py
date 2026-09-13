@@ -86,8 +86,8 @@ def test_render_pattern_production_and_mockup(pattern_id, sample_artworks):
         )
 
         assert job.status == "completed"
-        assert job.width == 5400
-        assert job.height == 5286
+        assert job.canvas_width == 5400
+        assert job.canvas_height == 5286
         assert os.path.exists(job.output_png_path), f"Production PNG must exist for {pattern_id}"
         assert job.output_mockup_png_path is not None
         assert os.path.exists(job.output_mockup_png_path), f"Mockup PNG must exist for {pattern_id}"
