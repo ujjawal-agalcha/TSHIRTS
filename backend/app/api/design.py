@@ -188,3 +188,199 @@ def list_design_jobs(
         r.views = ["black_front", "black_back", "white_front", "white_back"]
         results.append(r)
     return results
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Design Blending Endpoints (standalone artwork preparation tool)
+# ══════════════════════════════════════════════════════════════════════════════
+
+from PIL import Image as PILImage
+from app.services.design_blender import DesignBlender, ORIGINALS_DIR
+import uuid
+import io
+
+@router.post("/design/blend/preview")
+async def blend_preview(
+    background: UploadFile = File(...),
+    artwork: UploadFile = File(...),
+    x: int = 0,
+    y: int = 0,
+    target_width: int = None,
+    target_height: int = None,
+    scale: float = 1.0,
+    rotation: float = 0.0,
+    blend_mode: str = "normal",
+    blend_strength: float = 100.0,
+    opacity: float = 100.0
+):
+    """
+    Generates a reduced-resolution preview of the blend operation
+    with automatic background luminance analysis and mode recommendation.
+    """
+    try:
+        bg_bytes = await background.read()
+        art_bytes = await artwork.read()
+        bg_img = PILImage.open(io.BytesIO(bg_bytes)).convert("RGBA")
+        art_img = PILImage.open(io.BytesIO(art_bytes)).convert("RGBA")
+
+        # Save originals for potential re-use
+        bg_id = uuid.uuid4().hex[:12]
+        art_id = uuid.uuid4().hex[:12]
+        bg_path = os.path.join(ORIGINALS_DIR, f"bg_{bg_id}.png")
+        art_path = os.path.join(ORIGINALS_DIR, f"art_{art_id}.png")
+        bg_img.save(bg_path, "PNG")
+        art_img.save(art_path, "PNG")
+
+        preview_url, analysis = DesignBlender.generate_preview(
+            bg_img=bg_img, art_img=art_img,
+            x=x, y=y,
+            target_width=target_width, target_height=target_height,
+            scale=scale, rotation=rotation,
+            blend_mode=blend_mode, blend_strength=blend_strength,
+            opacity=opacity
+        )
+
+        return {
+            "preview_url": preview_url,
+            "analysis": analysis,
+            "background_id": bg_id,
+            "artwork_id": art_id,
+            "background_size": {"width": bg_img.size[0], "height": bg_img.size[1]},
+            "artwork_size": {"width": art_img.size[0], "height": art_img.size[1]}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Blend preview failed: {str(e)}")
+
+@router.post("/design/blend/preview-update")
+async def blend_preview_update(
+    background_id: str,
+    artwork_id: str,
+    x: int = 0,
+    y: int = 0,
+    target_width: int = None,
+    target_height: int = None,
+    scale: float = 1.0,
+    rotation: float = 0.0,
+    blend_mode: str = "normal",
+    blend_strength: float = 100.0,
+    opacity: float = 100.0
+):
+    """
+    Regenerates preview using previously uploaded background/artwork by ID.
+    Avoids re-uploading large files for interactive parameter adjustments.
+    """
+    try:
+        bg_path = os.path.join(ORIGINALS_DIR, f"bg_{background_id}.png")
+        art_path = os.path.join(ORIGINALS_DIR, f"art_{artwork_id}.png")
+        if not os.path.exists(bg_path) or not os.path.exists(art_path):
+            raise HTTPException(status_code=404, detail="Background or artwork not found. Please re-upload.")
+
+        bg_img = PILImage.open(bg_path).convert("RGBA")
+        art_img = PILImage.open(art_path).convert("RGBA")
+
+        preview_url, analysis = DesignBlender.generate_preview(
+            bg_img=bg_img, art_img=art_img,
+            x=x, y=y,
+            target_width=target_width, target_height=target_height,
+            scale=scale, rotation=rotation,
+            blend_mode=blend_mode, blend_strength=blend_strength,
+            opacity=opacity
+        )
+
+        return {
+            "preview_url": preview_url,
+            "analysis": analysis
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Preview update failed: {str(e)}")
+
+@router.post("/design/blend")
+async def blend_export(
+    background: UploadFile = File(...),
+    artwork: UploadFile = File(...),
+    x: int = 0,
+    y: int = 0,
+    target_width: int = None,
+    target_height: int = None,
+    scale: float = 1.0,
+    rotation: float = 0.0,
+    blend_mode: str = "normal",
+    blend_strength: float = 100.0,
+    opacity: float = 100.0
+):
+    """
+    Generates full-resolution blended PNG at native background dimensions.
+    """
+    try:
+        bg_bytes = await background.read()
+        art_bytes = await artwork.read()
+        bg_img = PILImage.open(io.BytesIO(bg_bytes)).convert("RGBA")
+        art_img = PILImage.open(io.BytesIO(art_bytes)).convert("RGBA")
+
+        filepath, w, h, size_bytes = DesignBlender.export_final_png(
+            bg_img=bg_img, art_img=art_img,
+            x=x, y=y,
+            target_width=target_width, target_height=target_height,
+            scale=scale, rotation=rotation,
+            blend_mode=blend_mode, blend_strength=blend_strength,
+            opacity=opacity
+        )
+
+        filename = os.path.basename(filepath)
+        return {
+            "output_url": f"/storage/blending/outputs/{filename}",
+            "download_url": f"/storage/blending/outputs/{filename}",
+            "width": w,
+            "height": h,
+            "file_size_bytes": size_bytes
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Blend export failed: {str(e)}")
+
+@router.post("/design/blend/send-to-generator")
+async def blend_send_to_generator(
+    background: UploadFile = File(...),
+    artwork: UploadFile = File(...),
+    x: int = 0,
+    y: int = 0,
+    target_width: int = None,
+    target_height: int = None,
+    scale: float = 1.0,
+    rotation: float = 0.0,
+    blend_mode: str = "normal",
+    blend_strength: float = 100.0,
+    opacity: float = 100.0,
+    db: Session = Depends(get_db)
+):
+    """
+    Exports blended result and saves it as a design artwork for use
+    in the Design Generator. Returns artwork_id reference.
+    """
+    try:
+        bg_bytes = await background.read()
+        art_bytes = await artwork.read()
+        bg_img = PILImage.open(io.BytesIO(bg_bytes)).convert("RGBA")
+        art_img = PILImage.open(io.BytesIO(art_bytes)).convert("RGBA")
+
+        final_img = DesignBlender.blend_layers(
+            bg_img=bg_img, art_img=art_img,
+            x=x, y=y,
+            target_width=target_width, target_height=target_height,
+            scale=scale, rotation=rotation,
+            blend_mode=blend_mode, blend_strength=blend_strength,
+            opacity=opacity
+        )
+
+        # Save as artwork upload for Design Generator
+        filename = f"blended_artwork_{uuid.uuid4().hex[:12]}.png"
+        buf = io.BytesIO()
+        final_img.save(buf, "PNG")
+        buf.seek(0)
+
+        result = DesignService.save_uploaded_artwork(buf.read(), filename, db)
+        result["source"] = "design_blending"
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Send to generator failed: {str(e)}")
+

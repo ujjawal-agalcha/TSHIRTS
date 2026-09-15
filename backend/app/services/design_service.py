@@ -332,74 +332,186 @@ class DesignService:
         include_labels: bool = False,
         generate_mockup: bool = True,
         mockup_params: Optional[Dict[str, Any]] = None,
+        template_id: Optional[int] = None,
+        artworks: Optional[Dict[str, str]] = None,
         db: Session = None
     ) -> DesignJob:
         """
-        Executes production 2x2 PNG generation:
+        Executes production PNG generation for arbitrary apparel templates:
         1. Clean Production PNG (unaltered artwork placement for print production)
         2. Photorealistic Mockup PNG (folds, wrinkles, fabric texture, lighting interaction)
-        Both outputs are saved separately at full resolution (e.g. 5400x5286 px).
+        Supports generic apparel templates, per-template assets, version safety snapshotting,
+        and backward-compatible 2x2 sheets for T-shirts.
         """
         pattern = db.query(Pattern).filter(Pattern.pattern_id == pattern_id).first()
         if not pattern:
             raise ValueError(f"Pattern '{pattern_id}' not found.")
 
+        # Resolve Template
+        template = None
+        if template_id:
+            template = db.query(Template).filter(Template.id == template_id).first()
+            if not template:
+                raise ValueError(f"Template '{template_id}' not found.")
+        else:
+            template = db.query(Template).filter(Template.code == "oversized_master").first() or db.query(Template).first()
+
         reqs = PatternEngine.get_pattern_requirements(pattern)
-        if reqs["requires_front"] and not front_artwork_id:
+
+        # Check template view compatibility
+        if template and template.assets:
+            available_views = {a.view.lower() for a in template.assets}
+            if reqs.get("requires_back", False) and "back" not in available_views:
+                raise ValueError("This template does not have a Back view.")
+            if reqs.get("requires_front", False) and "front" not in available_views and len(available_views) > 0:
+                # If template has no front view and no compatible views
+                if not any(v in available_views for v in ["front", "left_leg", "right_leg", "custom"]):
+                    raise ValueError("This template does not have a Front view.")
+
+        if reqs["requires_front"] and not front_artwork_id and not (artworks and artworks.get("front")):
             raise ValueError("Front artwork is required for this pattern.")
-        if reqs["requires_back"] and not back_artwork_id:
+        if reqs["requires_back"] and not back_artwork_id and not (artworks and artworks.get("back")):
             raise ValueError("Back artwork is required for this pattern.")
 
-        # Load artworks
-        front_art_img = None
-        if reqs["requires_front"] and front_artwork_id:
-            front_path = os.path.join(UPLOADS_DIR, front_artwork_id)
-            if not os.path.exists(front_path):
-                raise FileNotFoundError(f"Front artwork file '{front_artwork_id}' not found.")
-            front_art_img = PNGProcessor.load_artwork(front_path)
-
-        back_art_img = None
-        if reqs["requires_back"] and back_artwork_id:
-            back_path = os.path.join(UPLOADS_DIR, back_artwork_id)
-            if not os.path.exists(back_path):
-                raise FileNotFoundError(f"Back artwork file '{back_artwork_id}' not found.")
-            back_art_img = PNGProcessor.load_artwork(back_path)
-
-        # Get front print zone
-        f_slots = pattern.get_front_slots()
-        f_zone_code = f_slots[0].get("zone_code") if f_slots else "FULL_FRONT"
-        f_zone = db.query(PrintZone).filter(PrintZone.zone_code == f_zone_code).first()
-        front_zone_dict = DesignService._get_zone_dict(f_zone, 864.0, 640.0, 970.0, 1451.0)
-
-        # Get back print zone
-        b_slots = pattern.get_back_slots()
-        b_zone_code = b_slots[0].get("zone_code") if b_slots else "FULL_BACK"
-        b_zone = db.query(PrintZone).filter(PrintZone.zone_code == b_zone_code).first()
-        back_zone_dict = DesignService._get_zone_dict(b_zone, 750.0, 550.0, 1200.0, 1650.0)
-
-        front_tf = transforms.get("front", {})
-        back_tf = transforms.get("back", {})
-
+        transforms = transforms or {}
         now = datetime.utcnow()
         timestamp_str = now.strftime("%Y%m%d_%H%M%S")
         safe_pattern_code = pattern_id.upper().replace("-", "_")
         job_code = f"DESIGNJOB_{timestamp_str}_{safe_pattern_code}"
 
-        # 1. RENDER CLEAN PRODUCTION 2x2 PNG (No artificial distortion/blend)
-        blk_front_prod = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=False)
-        blk_back_prod = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=False)
-        wht_front_prod = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=False)
-        wht_back_prod = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=False)
+        # Load standard artworks if supplied
+        front_art_img = None
+        f_id = front_artwork_id or (artworks.get("front") if artworks else None)
+        if f_id:
+            front_path = os.path.join(UPLOADS_DIR, f_id)
+            if not os.path.exists(front_path):
+                raise FileNotFoundError(f"Front artwork file '{f_id}' not found.")
+            front_art_img = PNGProcessor.load_artwork(front_path)
 
-        sheet_prod = PNGProcessor.create_2x2_sheet(
-            black_front=blk_front_prod,
-            black_back=blk_back_prod,
-            white_front=wht_front_prod,
-            white_back=wht_back_prod,
-            include_labels=include_labels
+        back_art_img = None
+        b_id = back_artwork_id or (artworks.get("back") if artworks else None)
+        if b_id:
+            back_path = os.path.join(UPLOADS_DIR, b_id)
+            if not os.path.exists(back_path):
+                raise FileNotFoundError(f"Back artwork file '{b_id}' not found.")
+            back_art_img = PNGProcessor.load_artwork(back_path)
+
+        # Determine if this is a custom generic template (not the default 4-quadrant T-shirt)
+        is_custom_generic = (
+            template is not None
+            and template.code != "oversized_master"
+            and len(template.assets) > 0
         )
 
-        png_filename = f"tshirt_{pattern_id}_{job_code}_production.png"
+        if is_custom_generic:
+            # --- GENERIC APPAREL PIPELINE ---
+            prod_views: List[Tuple[str, Image.Image]] = []
+            mock_views: List[Tuple[str, Image.Image]] = []
+
+            for asset in template.assets:
+                base_img = PNGProcessor.load_asset_image(asset.file_path)
+                v_name = asset.view.lower()
+
+                # Find relevant zone for this view
+                zone = None
+                for z in template.zones:
+                    if (z.view and z.view.lower() == v_name) or (z.side and z.side.lower() == v_name):
+                        zone = z
+                        break
+
+                zone_dict = DesignService._get_zone_dict(
+                    zone,
+                    default_x=zone.x if zone else 0.0,
+                    default_y=zone.y if zone else 0.0,
+                    default_w=zone.width if zone else float(base_img.width * 0.5),
+                    default_h=zone.height if zone else float(base_img.height * 0.5)
+                )
+
+                # Match artwork
+                art_img = None
+                tf = transforms.get(v_name, {})
+                if v_name in ("front", "front_center", "front_full", "left_chest"):
+                    art_img = front_art_img
+                    tf = transforms.get("front", tf)
+                elif v_name in ("back", "back_center", "back_full"):
+                    art_img = back_art_img
+                    tf = transforms.get("back", tf)
+                elif artworks and v_name in artworks:
+                    art_path = os.path.join(UPLOADS_DIR, artworks[v_name])
+                    if os.path.exists(art_path):
+                        art_img = PNGProcessor.load_artwork(art_path)
+                else:
+                    art_img = front_art_img # fallback to primary artwork
+
+                # Render views
+                prod_view_img = PNGProcessor.render_generic_view(
+                    base_img=base_img,
+                    artwork_img=art_img,
+                    zone_coords=zone_dict,
+                    transform=tf,
+                    realistic=False
+                )
+                prod_views.append((asset.view, prod_view_img))
+
+                if generate_mockup:
+                    mock_view_img = PNGProcessor.render_generic_view(
+                        base_img=base_img,
+                        artwork_img=art_img,
+                        zone_coords=zone_dict,
+                        transform=tf,
+                        realistic=True,
+                        mockup_params=mockup_params
+                    )
+                    mock_views.append((asset.view, mock_view_img))
+
+            sheet_prod = PNGProcessor.create_generic_sheet(prod_views, include_labels=include_labels)
+            sheet_mock = PNGProcessor.create_generic_sheet(mock_views, include_labels=include_labels) if generate_mockup else None
+
+        else:
+            # --- DEFAULT T-SHIRT 2x2 PIPELINE ---
+            f_slots = pattern.get_front_slots()
+            f_zone_code = f_slots[0].get("zone_code") if f_slots else "FULL_FRONT"
+            f_zone = db.query(PrintZone).filter(PrintZone.zone_code == f_zone_code).first()
+            front_zone_dict = DesignService._get_zone_dict(f_zone, 864.0, 640.0, 970.0, 1451.0)
+
+            b_slots = pattern.get_back_slots()
+            b_zone_code = b_slots[0].get("zone_code") if b_slots else "FULL_BACK"
+            b_zone = db.query(PrintZone).filter(PrintZone.zone_code == b_zone_code).first()
+            back_zone_dict = DesignService._get_zone_dict(b_zone, 750.0, 550.0, 1200.0, 1650.0)
+
+            front_tf = transforms.get("front", {})
+            back_tf = transforms.get("back", {})
+
+            blk_front_prod = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=False)
+            blk_back_prod = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=False)
+            wht_front_prod = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=False)
+            wht_back_prod = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=False)
+
+            sheet_prod = PNGProcessor.create_2x2_sheet(
+                black_front=blk_front_prod,
+                black_back=blk_back_prod,
+                white_front=wht_front_prod,
+                white_back=wht_back_prod,
+                include_labels=include_labels
+            )
+
+            sheet_mock = None
+            if generate_mockup:
+                blk_front_mock = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=True, mockup_params=mockup_params)
+                blk_back_mock = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=True, mockup_params=mockup_params)
+                wht_front_mock = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=True, mockup_params=mockup_params)
+                wht_back_mock = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=True, mockup_params=mockup_params)
+
+                sheet_mock = PNGProcessor.create_2x2_sheet(
+                    black_front=blk_front_mock,
+                    black_back=blk_back_mock,
+                    white_front=wht_front_mock,
+                    white_back=wht_back_mock,
+                    include_labels=include_labels
+                )
+
+        # Save production PNG
+        png_filename = f"apparel_{pattern_id}_{job_code}_production.png"
         png_output_path = os.path.join(GENERATED_DIR, png_filename)
         PNGProcessor.export_png(sheet_prod, png_output_path)
 
@@ -407,28 +519,36 @@ class DesignService:
         preview_png_path = os.path.join(GENERATED_DIR, preview_png_filename)
         PNGProcessor.export_web_preview(sheet_prod, preview_png_path, max_width=1600)
 
-        # 2. RENDER REALISTIC MOCKUP 2x2 PNG (Fabric interaction, folds, texture)
+        # Save realistic mockup PNG if generated
         mockup_output_path = None
-        if generate_mockup:
-            blk_front_mock = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=True, mockup_params=mockup_params)
-            blk_back_mock = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=True, mockup_params=mockup_params)
-            wht_front_mock = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=True, mockup_params=mockup_params)
-            wht_back_mock = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=True, mockup_params=mockup_params)
-
-            sheet_mock = PNGProcessor.create_2x2_sheet(
-                black_front=blk_front_mock,
-                black_back=blk_back_mock,
-                white_front=wht_front_mock,
-                white_back=wht_back_mock,
-                include_labels=include_labels
-            )
-
-            mockup_filename = f"tshirt_{pattern_id}_{job_code}_mockup.png"
+        if sheet_mock:
+            mockup_filename = f"apparel_{pattern_id}_{job_code}_mockup.png"
             mockup_output_path = os.path.join(GENERATED_DIR, mockup_filename)
             PNGProcessor.export_png(sheet_mock, mockup_output_path)
 
         file_size = os.path.getsize(png_output_path) if os.path.exists(png_output_path) else 0
         final_w, final_h = sheet_prod.size
+
+        # Version Safety Snapshot
+        snapshot_data = {
+            "template_id": template.id if template else None,
+            "template_name": template.name if template else "Default Master",
+            "category": template.category if template else "T-Shirt",
+            "color": color,
+            "style": style,
+            "canvas_width": final_w,
+            "canvas_height": final_h,
+            "assets": [
+                {"view": a.view, "file_path": a.file_path, "width": a.width, "height": a.height}
+                for a in (template.assets if template else [])
+            ],
+            "zones": [
+                {"name": z.name, "view": z.view or z.side, "zone_code": z.zone_code, "x": z.x, "y": z.y, "width": z.width, "height": z.height}
+                for z in (template.zones if template else [])
+            ],
+            "pattern_id": pattern_id,
+            "generated_at": now.isoformat()
+        }
 
         # Save DesignJob
         job = DesignJob(
@@ -438,8 +558,8 @@ class DesignService:
             pattern_id=pattern_id,
             pattern_name=pattern.name,
             status="completed",
-            front_artwork_path=front_artwork_id,
-            back_artwork_path=back_artwork_id,
+            front_artwork_path=f_id,
+            back_artwork_path=b_id,
             output_png_path=png_output_path,
             output_mockup_png_path=mockup_output_path,
             preview_png_path=preview_png_path,
@@ -448,6 +568,8 @@ class DesignService:
             canvas_height=final_h,
             format="PNG",
             color_mode="RGBA",
+            template_id=template.id if template else None,
+            template_snapshot=json.dumps(snapshot_data),
             placement_config=json.dumps(transforms),
             completed_at=datetime.utcnow()
         )
@@ -461,6 +583,7 @@ class DesignService:
                 "color": color,
                 "style": style,
                 "pattern_id": pattern_id,
+                "template_id": template.id if template else None,
                 "format": "PNG",
                 "resolution": f"{final_w}x{final_h}",
                 "file_size": file_size,
@@ -476,16 +599,18 @@ class DesignService:
     @staticmethod
     def generate_2x2_preview(
         pattern_id: str,
-        front_artwork_id: Optional[str],
-        back_artwork_id: Optional[str],
+        front_artwork_id: Optional[str] = None,
+        back_artwork_id: Optional[str] = None,
         transforms: Optional[Dict[str, Any]] = None,
         include_labels: bool = False,
         mode: str = "flat",
         mockup_params: Optional[Dict[str, Any]] = None,
+        template_id: Optional[int] = None,
+        artworks: Optional[Dict[str, str]] = None,
         db: Session = None
     ) -> str:
         """
-        Creates a fast, web-scaled 2x2 preview sheet using the exact same authoritative rendering pipeline.
+        Creates a fast, web-scaled preview sheet matching the production render.
         mode="flat": clean placement preview
         mode="realistic": photorealistic mockup with fabric folds, wrinkles, and texture
         Returns the relative URL for frontend display.
@@ -494,51 +619,112 @@ class DesignService:
         pattern = db.query(Pattern).filter(Pattern.pattern_id == pattern_id).first()
         reqs = PatternEngine.get_pattern_requirements(pattern) if pattern else {"requires_front": True, "requires_back": False}
 
+        template = None
+        if template_id:
+            template = db.query(Template).filter(Template.id == template_id).first()
+        if not template:
+            template = db.query(Template).filter(Template.code == "oversized_master").first() or db.query(Template).first()
+
+        f_id = front_artwork_id or (artworks.get("front") if artworks else None)
         front_art_img = None
-        if reqs["requires_front"] and front_artwork_id:
-            front_path = os.path.join(UPLOADS_DIR, front_artwork_id)
+        if reqs["requires_front"] and f_id:
+            front_path = os.path.join(UPLOADS_DIR, f_id)
             if os.path.exists(front_path):
                 front_art_img = PNGProcessor.load_artwork(front_path)
 
+        b_id = back_artwork_id or (artworks.get("back") if artworks else None)
         back_art_img = None
-        if reqs["requires_back"] and back_artwork_id:
-            back_path = os.path.join(UPLOADS_DIR, back_artwork_id)
+        if reqs["requires_back"] and b_id:
+            back_path = os.path.join(UPLOADS_DIR, b_id)
             if os.path.exists(back_path):
                 back_art_img = PNGProcessor.load_artwork(back_path)
 
-        # Front zone
-        f_slots = pattern.get_front_slots() if pattern else []
-        f_zone_code = f_slots[0].get("zone_code") if f_slots else "FULL_FRONT"
-        f_zone = db.query(PrintZone).filter(PrintZone.zone_code == f_zone_code).first()
-        front_zone_dict = DesignService._get_zone_dict(f_zone, 864.0, 640.0, 970.0, 1451.0)
-
-        # Back zone
-        b_slots = pattern.get_back_slots() if pattern else []
-        b_zone_code = b_slots[0].get("zone_code") if b_slots else "FULL_BACK"
-        b_zone = db.query(PrintZone).filter(PrintZone.zone_code == b_zone_code).first()
-        back_zone_dict = DesignService._get_zone_dict(b_zone, 750.0, 550.0, 1200.0, 1650.0)
-
-        front_tf = transforms.get("front", {})
-        back_tf = transforms.get("back", {})
-
         is_realistic = (mode == "realistic")
 
-        blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=is_realistic, mockup_params=mockup_params)
-        blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=is_realistic, mockup_params=mockup_params)
-        wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=is_realistic, mockup_params=mockup_params)
-        wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=is_realistic, mockup_params=mockup_params)
-
-        sheet_2x2 = PNGProcessor.create_2x2_sheet(
-            black_front=blk_front,
-            black_back=blk_back,
-            white_front=wht_front,
-            white_back=wht_back,
-            include_labels=include_labels
+        is_custom_generic = (
+            template is not None
+            and template.code != "oversized_master"
+            and len(template.assets) > 0
         )
+
+        if is_custom_generic:
+            rendered_views: List[Tuple[str, Image.Image]] = []
+            for asset in template.assets:
+                base_img = PNGProcessor.load_asset_image(asset.file_path)
+                v_name = asset.view.lower()
+
+                zone = None
+                for z in template.zones:
+                    if (z.view and z.view.lower() == v_name) or (z.side and z.side.lower() == v_name):
+                        zone = z
+                        break
+
+                zone_dict = DesignService._get_zone_dict(
+                    zone,
+                    default_x=zone.x if zone else 0.0,
+                    default_y=zone.y if zone else 0.0,
+                    default_w=zone.width if zone else float(base_img.width * 0.5),
+                    default_h=zone.height if zone else float(base_img.height * 0.5)
+                )
+
+                art_img = None
+                tf = transforms.get(v_name, {})
+                if v_name in ("front", "front_center", "front_full", "left_chest"):
+                    art_img = front_art_img
+                    tf = transforms.get("front", tf)
+                elif v_name in ("back", "back_center", "back_full"):
+                    art_img = back_art_img
+                    tf = transforms.get("back", tf)
+                elif artworks and v_name in artworks:
+                    art_path = os.path.join(UPLOADS_DIR, artworks[v_name])
+                    if os.path.exists(art_path):
+                        art_img = PNGProcessor.load_artwork(art_path)
+                else:
+                    art_img = front_art_img
+
+                v_img = PNGProcessor.render_generic_view(
+                    base_img=base_img,
+                    artwork_img=art_img,
+                    zone_coords=zone_dict,
+                    transform=tf,
+                    realistic=is_realistic,
+                    mockup_params=mockup_params
+                )
+                rendered_views.append((asset.view, v_img))
+
+            sheet = PNGProcessor.create_generic_sheet(rendered_views, include_labels=include_labels)
+        else:
+            # Front zone
+            f_slots = pattern.get_front_slots() if pattern else []
+            f_zone_code = f_slots[0].get("zone_code") if f_slots else "FULL_FRONT"
+            f_zone = db.query(PrintZone).filter(PrintZone.zone_code == f_zone_code).first()
+            front_zone_dict = DesignService._get_zone_dict(f_zone, 864.0, 640.0, 970.0, 1451.0)
+
+            # Back zone
+            b_slots = pattern.get_back_slots() if pattern else []
+            b_zone_code = b_slots[0].get("zone_code") if b_slots else "FULL_BACK"
+            b_zone = db.query(PrintZone).filter(PrintZone.zone_code == b_zone_code).first()
+            back_zone_dict = DesignService._get_zone_dict(b_zone, 750.0, 550.0, 1200.0, 1650.0)
+
+            front_tf = transforms.get("front", {})
+            back_tf = transforms.get("back", {})
+
+            blk_front = PNGProcessor.render_shirt_view("black_front", front_art_img, front_zone_dict, front_tf, realistic=is_realistic, mockup_params=mockup_params)
+            blk_back = PNGProcessor.render_shirt_view("black_back", back_art_img, back_zone_dict, back_tf, realistic=is_realistic, mockup_params=mockup_params)
+            wht_front = PNGProcessor.render_shirt_view("white_front", front_art_img, front_zone_dict, front_tf, realistic=is_realistic, mockup_params=mockup_params)
+            wht_back = PNGProcessor.render_shirt_view("white_back", back_art_img, back_zone_dict, back_tf, realistic=is_realistic, mockup_params=mockup_params)
+
+            sheet = PNGProcessor.create_2x2_sheet(
+                black_front=blk_front,
+                black_back=blk_back,
+                white_front=wht_front,
+                white_back=wht_back,
+                include_labels=include_labels
+            )
 
         preview_filename = f"preview_2x2_{uuid.uuid4().hex[:10]}.png"
         preview_path = os.path.join(GENERATED_DIR, preview_filename)
-        PNGProcessor.export_web_preview(sheet_2x2, preview_path, max_width=1600)
+        PNGProcessor.export_web_preview(sheet, preview_path, max_width=1600)
 
         return f"/generated/{preview_filename}"
 

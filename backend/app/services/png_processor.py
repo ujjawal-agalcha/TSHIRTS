@@ -157,8 +157,37 @@ class PNGProcessor:
         return Image.alpha_composite(shirt_img, overlay)
 
     @staticmethod
-    def render_shirt_view(
-        view_key: str,
+    def load_asset_image(asset_path: str) -> Image.Image:
+        """
+        Loads an arbitrary template asset image by relative URL, disk path, or mockup key.
+        """
+        if not asset_path:
+            raise ValueError("Asset path cannot be empty.")
+
+        clean_path = asset_path.lstrip("/")
+        candidates = [
+            asset_path,
+            os.path.join(BASE_DIR, clean_path),
+            os.path.join(BASE_DIR, "backend", clean_path),
+            os.path.join(BASE_DIR, "templates", clean_path),
+            os.path.join(BASE_DIR, "templates", "mockups", clean_path),
+        ]
+
+        # Handle static mockup paths like /mockups/black_front.png
+        if "mockups/" in asset_path:
+            filename = os.path.basename(asset_path)
+            candidates.insert(0, os.path.join(BASE_DIR, "templates", "mockups", filename))
+            candidates.insert(1, os.path.join(TEMPLATES_EXTRACTED_DIR, filename))
+
+        for cand in candidates:
+            if cand and os.path.exists(cand):
+                return Image.open(cand).convert("RGBA")
+
+        raise FileNotFoundError(f"Template asset image not found at any of: {candidates}")
+
+    @staticmethod
+    def render_generic_view(
+        base_img: Image.Image,
         artwork_img: Optional[Image.Image] = None,
         zone_coords: Optional[Dict[str, Any]] = None,
         transform: Optional[Dict[str, Any]] = None,
@@ -166,17 +195,16 @@ class PNGProcessor:
         mockup_params: Optional[Dict[str, Any]] = None
     ) -> Image.Image:
         """
-        Renders a single 2700x2643 shirt view with artwork properly positioned if supplied.
-        view_key: 'black_front', 'white_front', 'black_back', 'white_back'
-        When realistic=True, applies authentic fabric fold/crease shading, texture, and subtle displacement.
+        Renders an artwork onto any arbitrary apparel template view image
+        using exact pixel coordinates of the print zone.
         """
-        shirt = PNGProcessor.load_template(view_key)
-        
+        img = base_img.convert("RGBA")
+
         if artwork_img is not None and zone_coords is not None:
-            zone_x = float(zone_coords.get("x", 864))
-            zone_y = float(zone_coords.get("y", 640))
-            zone_w = float(zone_coords.get("width", 970))
-            zone_h = float(zone_coords.get("height", 1451))
+            zone_x = float(zone_coords.get("x", 0))
+            zone_y = float(zone_coords.get("y", 0))
+            zone_w = float(zone_coords.get("width", img.width * 0.4))
+            zone_h = float(zone_coords.get("height", img.height * 0.4))
             safe_margin = float(zone_coords.get("safe_margin", 20.0))
             default_fit = zone_coords.get("fit_mode", "contain")
 
@@ -204,8 +232,8 @@ class PNGProcessor:
 
             if realistic:
                 mp = mockup_params or {}
-                shirt = MockupBlender.blend_artwork(
-                    shirt_img=shirt,
+                img = MockupBlender.blend_artwork(
+                    shirt_img=img,
                     artwork_img=transformed_art,
                     x=abs_x,
                     y=abs_y,
@@ -217,9 +245,101 @@ class PNGProcessor:
                     blend_mode=mp.get("blend_mode", "auto")
                 )
             else:
-                shirt = PNGProcessor.composite_artwork(shirt, transformed_art, abs_x, abs_y)
+                img = PNGProcessor.composite_artwork(img, transformed_art, abs_x, abs_y)
 
-        return shirt
+        return img
+
+    @staticmethod
+    def render_shirt_view(
+        view_key: str,
+        artwork_img: Optional[Image.Image] = None,
+        zone_coords: Optional[Dict[str, Any]] = None,
+        transform: Optional[Dict[str, Any]] = None,
+        realistic: bool = False,
+        mockup_params: Optional[Dict[str, Any]] = None
+    ) -> Image.Image:
+        """
+        Renders a single 2700x2643 shirt view with artwork properly positioned if supplied.
+        view_key: 'black_front', 'white_front', 'black_back', 'white_back'
+        When realistic=True, applies authentic fabric fold/crease shading, texture, and subtle displacement.
+        """
+        shirt = PNGProcessor.load_template(view_key)
+        return PNGProcessor.render_generic_view(
+            base_img=shirt,
+            artwork_img=artwork_img,
+            zone_coords=zone_coords,
+            transform=transform,
+            realistic=realistic,
+            mockup_params=mockup_params
+        )
+
+    @staticmethod
+    def create_generic_sheet(
+        rendered_views: List[Tuple[str, Image.Image]],
+        include_labels: bool = False
+    ) -> Image.Image:
+        """
+        Dynamically tiles an arbitrary number of rendered apparel views:
+        - 1 view: returns image directly
+        - 2 views: tiles side-by-side
+        - 4 views (2x2): tiles in 2x2 grid
+        - N views: tiles neatly in a grid
+        """
+        if not rendered_views:
+            raise ValueError("No views provided to create sheet.")
+
+        if len(rendered_views) == 1:
+            return rendered_views[0][1]
+
+        if len(rendered_views) == 2:
+            view1_name, img1 = rendered_views[0]
+            view2_name, img2 = rendered_views[1]
+            total_w = img1.width + img2.width
+            max_h = max(img1.height, img2.height)
+
+            sheet = Image.new("RGBA", (total_w, max_h), (0, 0, 0, 0))
+            sheet.paste(img1, (0, 0), img1)
+            sheet.paste(img2, (img1.width, 0), img2)
+
+            if include_labels:
+                draw = ImageDraw.Draw(sheet)
+                try:
+                    font = ImageFont.truetype("arial.ttf", 48)
+                except Exception:
+                    font = ImageFont.load_default()
+                label_color = (128, 128, 128, 200)
+                draw.text((60, 60), view1_name.upper(), fill=label_color, font=font)
+                draw.text((img1.width + 60, 60), view2_name.upper(), fill=label_color, font=font)
+            return sheet
+
+        # 3 or more views: grid layout
+        import math
+        cols = 2 if len(rendered_views) <= 4 else 3
+        rows = math.ceil(len(rendered_views) / cols)
+
+        max_vw = max(img.width for _, img in rendered_views)
+        max_vh = max(img.height for _, img in rendered_views)
+
+        sheet_w = max_vw * cols
+        sheet_h = max_vh * rows
+
+        sheet = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(sheet) if include_labels else None
+        try:
+            font = ImageFont.truetype("arial.ttf", 48) if include_labels else None
+        except Exception:
+            font = ImageFont.load_default() if include_labels else None
+
+        for idx, (v_name, v_img) in enumerate(rendered_views):
+            c = idx % cols
+            r = idx // cols
+            pos_x = c * max_vw
+            pos_y = r * max_vh
+            sheet.paste(v_img, (pos_x, pos_y), v_img)
+            if include_labels and draw and font:
+                draw.text((pos_x + 60, pos_y + 60), v_name.upper(), fill=(128, 128, 128, 200), font=font)
+
+        return sheet
 
     @staticmethod
     def create_2x2_sheet(

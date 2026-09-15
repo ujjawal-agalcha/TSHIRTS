@@ -10,7 +10,8 @@ import {
   Settings, 
   LayoutDashboard,
   CheckCircle2,
-  Cpu
+  Cpu,
+  Blend
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -23,8 +24,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, serve
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'generator', label: 'Design Generator', icon: Sparkles, badge: 'Core' },
+    { id: 'blending', label: 'Design Blending', icon: Blend, badge: 'New' },
     { id: 'patterns', label: 'Pattern Library', icon: Layers },
-    { id: 'templates', label: 'Template Editor', icon: Sliders, badge: 'Calibrate' },
+    { id: 'templates', label: 'Template Manager', icon: Sliders, badge: 'Apparel' },
     { id: 'inventory', label: 'Inventory', icon: Package },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'master_data', label: 'Master Data', icon: Database },
@@ -42,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, serve
           </div>
           <div>
             <h1 className="font-bold text-white text-base tracking-tight leading-none">PRINTSTUDIO</h1>
-            <p className="text-[11px] text-blue-400 font-medium tracking-wider uppercase mt-1">PSD Engine Pro</p>
+            <p className="text-[11px] text-blue-400 font-medium tracking-wider uppercase mt-1">Apparel Engine v2</p>
           </div>
         </div>
       </div>

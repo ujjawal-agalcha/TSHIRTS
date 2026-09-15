@@ -6,7 +6,8 @@ from datetime import datetime
 class PrintZoneBase(BaseModel):
     zone_code: str
     name: str
-    side: str # front / back
+    side: str = "front" # front / back (legacy)
+    view: str = "front" # extensible view: front, back, sleeve_left, hood, etc.
     x: float
     y: float
     width: float
@@ -18,6 +19,9 @@ class PrintZoneBase(BaseModel):
     is_active: bool = True
 
 class PrintZoneUpdate(BaseModel):
+    name: Optional[str] = None
+    zone_code: Optional[str] = None
+    view: Optional[str] = None
     x: Optional[float] = None
     y: Optional[float] = None
     width: Optional[float] = None
@@ -33,18 +37,97 @@ class PrintZoneResponse(PrintZoneBase):
     id: int
     template_id: int
 
+# --- Template Asset ---
+class TemplateAssetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    template_id: int
+    view: str
+    file_path: str
+    width: int
+    height: int
+
 class TemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
-    code: str
-    canvas_width: int
-    canvas_height: int
-    preview_front_black: str
-    preview_front_white: str
-    preview_back_black: str
-    preview_back_white: str
+    code: Optional[str] = None
+    category: str = "T-Shirt"
+    color: str = "Black"
+    style: str = "Oversized"
+    description: Optional[str] = None
+    status: str = "active"
+    canvas_width: int = 2700
+    canvas_height: int = 2643
+    preview_front_black: Optional[str] = None
+    preview_front_white: Optional[str] = None
+    preview_back_black: Optional[str] = None
+    preview_back_white: Optional[str] = None
+    is_active: bool = True
+    assets: List[TemplateAssetResponse] = []
     zones: List[PrintZoneResponse] = []
+
+class TemplateCreateRequest(BaseModel):
+    name: str
+    category: str = "Custom"
+    color: str = "Black"
+    style: str = "Standard"
+    description: Optional[str] = None
+    status: str = "active"
+
+class TemplateUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    color: Optional[str] = None
+    style: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+# --- Template Category ---
+class TemplateCategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    code: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+class TemplateCategoryCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+# --- Design Blending ---
+class BlendPreviewRequest(BaseModel):
+    x: int = 0
+    y: int = 0
+    target_width: Optional[int] = None
+    target_height: Optional[int] = None
+    scale: float = 1.0
+    rotation: float = 0.0
+    blend_mode: str = "normal"
+    blend_strength: float = 100.0
+    opacity: float = 100.0
+
+class BlendPreviewResponse(BaseModel):
+    preview_url: str
+    analysis: Dict[str, Any]
+
+class BlendExportRequest(BaseModel):
+    x: int = 0
+    y: int = 0
+    target_width: Optional[int] = None
+    target_height: Optional[int] = None
+    scale: float = 1.0
+    rotation: float = 0.0
+    blend_mode: str = "normal"
+    blend_strength: float = 100.0
+    opacity: float = 100.0
+
+class BlendExportResponse(BaseModel):
+    output_url: str
+    width: int
+    height: int
+    file_size_bytes: int
 
 # --- Pattern ---
 class PatternSlotDef(BaseModel):

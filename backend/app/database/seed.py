@@ -3,10 +3,24 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal, Base, engine
 from app.models.garment import TshirtProduct, TshirtColor, TshirtStyle, TshirtSize
-from app.models.template import Template, PrintZone
+from app.models.template import Template, PrintZone, TemplateAsset, TemplateCategory
 from app.models.pattern import Pattern
 from app.models.inventory import Inventory, Supplier
 from app.models.design_job import DesignJob
+
+DEFAULT_CATEGORIES_DATA = [
+    {"name": "T-Shirt", "code": "t_shirt", "description": "Classic and oversized crewneck t-shirts"},
+    {"name": "Hoodie", "code": "hoodie", "description": "Pullover and zip-up hooded sweatshirts"},
+    {"name": "Sweatshirt", "code": "sweatshirt", "description": "Crewneck sweatshirts and fleece jumpers"},
+    {"name": "Lower", "code": "lower", "description": "Casual bottoms and loungewear lowers"},
+    {"name": "Track Pant", "code": "track_pant", "description": "Athletic and streetwear track pants"},
+    {"name": "Shorts", "code": "shorts", "description": "Athletic, mesh, and french terry shorts"},
+    {"name": "Jersey", "code": "jersey", "description": "Sports, basketball, and football jerseys"},
+    {"name": "Polo", "code": "polo", "description": "Collared polo shirts"},
+    {"name": "Tank Top", "code": "tank_top", "description": "Sleeveless vests and tank tops"},
+    {"name": "Jacket", "code": "jacket", "description": "Zip jackets, windbreakers, and bombers"},
+    {"name": "Custom", "code": "custom", "description": "Custom apparel products and cut-and-sew blanks"}
+]
 
 DEFAULT_PATTERNS_DATA = [
     {
@@ -193,18 +207,41 @@ def seed_default_patterns(db: Session):
 
 def migrate_database():
     with engine.connect() as conn:
-        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(design_jobs)"))]
-        new_cols = [
+        # 1. design_jobs columns
+        job_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(design_jobs)"))]
+        new_job_cols = [
             ("output_png_path", "VARCHAR(255)"),
             ("output_mockup_png_path", "VARCHAR(255)"),
             ("canvas_width", "INTEGER DEFAULT 5400"),
             ("canvas_height", "INTEGER DEFAULT 5286"),
             ("format", "VARCHAR(20) DEFAULT 'PNG'"),
             ("color_mode", "VARCHAR(20) DEFAULT 'RGBA'"),
+            ("template_id", "INTEGER"),
+            ("template_snapshot", "TEXT"),
         ]
-        for col_name, col_type in new_cols:
-            if col_name not in cols:
+        for col_name, col_type in new_job_cols:
+            if col_name not in job_cols:
                 conn.execute(text(f"ALTER TABLE design_jobs ADD COLUMN {col_name} {col_type}"))
+
+        # 2. templates columns
+        tmpl_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(templates)"))]
+        new_tmpl_cols = [
+            ("category", "VARCHAR(50) DEFAULT 'T-Shirt'"),
+            ("color", "VARCHAR(50) DEFAULT 'Black'"),
+            ("style", "VARCHAR(50) DEFAULT 'Oversized'"),
+            ("description", "TEXT"),
+            ("status", "VARCHAR(20) DEFAULT 'active'"),
+            ("updated_at", "DATETIME"),
+        ]
+        for col_name, col_type in new_tmpl_cols:
+            if col_name not in tmpl_cols:
+                conn.execute(text(f"ALTER TABLE templates ADD COLUMN {col_name} {col_type}"))
+
+        # 3. print_zones columns
+        zone_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(print_zones)"))]
+        if "view" not in zone_cols:
+            conn.execute(text("ALTER TABLE print_zones ADD COLUMN view VARCHAR(50) DEFAULT 'front'"))
+
         conn.commit()
 
 def seed_database():
@@ -213,6 +250,13 @@ def seed_database():
     db: Session = SessionLocal()
     
     try:
+        # 0. Categories
+        if db.query(TemplateCategory).count() == 0:
+            for cat_data in DEFAULT_CATEGORIES_DATA:
+                cat = TemplateCategory(**cat_data)
+                db.add(cat)
+            db.commit()
+
         # 1. Colors
         if db.query(TshirtColor).count() == 0:
             colors = [
@@ -250,6 +294,11 @@ def seed_database():
             template = Template(
                 name="Oversized Streetwear Master Template",
                 code="oversized_master",
+                category="T-Shirt",
+                color="Black",
+                style="Oversized",
+                description="Heavyweight relaxed-fit master t-shirt template",
+                status="active",
                 canvas_width=2700,
                 canvas_height=2643,
                 preview_front_black="/mockups/black_front.png",
@@ -261,6 +310,28 @@ def seed_database():
             db.add(template)
             db.commit()
             db.refresh(template)
+        else:
+            # Ensure generic fields are populated if null
+            if not template.category:
+                template.category = "T-Shirt"
+            if not template.color:
+                template.color = "Black"
+            if not template.style:
+                template.style = "Oversized"
+            if not template.status:
+                template.status = "active"
+            db.commit()
+
+        # 4b. Seed Template Assets for Master Template if missing
+        if db.query(TemplateAsset).filter(TemplateAsset.template_id == template.id).count() == 0:
+            assets = [
+                TemplateAsset(template_id=template.id, view="front", file_path="mockups/black_front.png", width=2700, height=2643),
+                TemplateAsset(template_id=template.id, view="back", file_path="mockups/black_back.png", width=2700, height=2643),
+                TemplateAsset(template_id=template.id, view="white_front", file_path="mockups/white_front.png", width=2700, height=2643),
+                TemplateAsset(template_id=template.id, view="white_back", file_path="mockups/white_back.png", width=2700, height=2643),
+            ]
+            db.add_all(assets)
+            db.commit()
 
         # 5. Print Zones for Template
         if db.query(PrintZone).filter(PrintZone.template_id == template.id).count() == 0:

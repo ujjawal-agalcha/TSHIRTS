@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/layout/Sidebar';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { DesignGenerator } from './components/generator/DesignGenerator';
+import { DesignBlending } from './components/blending/DesignBlending';
 import { PatternLibrary } from './components/patterns/PatternLibrary';
 import { TemplateEditor } from './components/template_editor/TemplateEditor';
 import { InventoryModule } from './components/inventory/InventoryModule';
@@ -50,6 +51,14 @@ export function App() {
       <main className="flex-1 overflow-y-auto">
         {currentTab === 'dashboard' && <Dashboard onNavigate={setCurrentTab} />}
         {currentTab === 'generator' && <DesignGenerator initialPatternId={selectedPatternId} />}
+        {currentTab === 'blending' && (
+          <DesignBlending
+            onSendToGenerator={(artworkId) => {
+              // Cross-tab navigation: navigate to generator with pre-loaded artwork
+              setCurrentTab('generator');
+            }}
+          />
+        )}
         {currentTab === 'patterns' && <PatternLibrary onSelectPatternForDesign={handleSelectPatternForDesign} />}
         {currentTab === 'templates' && <TemplateEditor />}
         {currentTab === 'inventory' && <InventoryModule />}

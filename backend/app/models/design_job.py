@@ -28,6 +28,9 @@ class DesignJob(Base):
     format = Column(String(20), default="PNG")
     color_mode = Column(String(20), default="RGBA")
     
+    template_id = Column(Integer, nullable=True) # Reference to Template if generated from database-backed template
+    template_snapshot = Column(Text, nullable=True) # JSON snapshot of template metadata, assets, and zones at generation time
+    
     placement_config = Column(Text, default="{}") # JSON string of slot transforms
     
     created_at = Column(DateTime, default=datetime.utcnow)
